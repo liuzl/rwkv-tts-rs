@@ -27,10 +27,21 @@ assets/model/
 ├── tokenizer.json (已包含)
 └── config.json
 
+编译依赖：
+在编译本项目前，需要安装以下依赖：
+
+1. ONNX Runtime 库
+   - Windows: 从 https://github.com/microsoft/onnxruntime/releases 下载
+   - Linux: 通过包管理器安装或下载预编译二进制文件
+   - macOS: 使用 Homebrew 安装 `brew install onnxruntime`
+
+2. 音频处理库（根据系统自动配置）
+
 注意事项：
 - 确保所有模型文件完整下载
 - 检查文件大小是否正确
 - 模型文件较大，请确保有足够的存储空间
 - 首次运行前请确认所有必需文件都已正确放置
+- 编译前请确保已正确安装 ONNX Runtime
 
 如有问题，请参考项目 README.md 或提交 Issue。
