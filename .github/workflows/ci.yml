@@ -28,8 +28,11 @@ jobs:
   build:
     name: Build on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     if: startsWith(github.ref, 'refs/tags/')
+    env:
+      CARGO_NET_RETRY: 10
+      CARGO_NET_GIT_FETCH_WITH_CLI: true
     strategy:
       matrix:
         include:
@@ -62,9 +65,16 @@ jobs:
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
           target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-v2
         restore-keys: |
           ${{ runner.os }}-cargo-
+      continue-on-error: true
+
+    - name: Clean cargo cache if needed
+      run: |
+        echo "Cleaning cargo cache to prevent corruption issues"
+        cargo clean
+      continue-on-error: true
 
     - name: Install ONNX Runtime (Windows)
       if: matrix.os == 'windows-latest'
@@ -98,7 +108,11 @@ jobs:
         echo "$PWD/onnxruntime-osx-x86_64-1.22.0/lib" >> $GITHUB_PATH
 
     - name: Build
-      run: cargo build --release --target ${{ matrix.target }}
+      run: |
+        echo "Starting build for target: ${{ matrix.target }}"
+        cargo build --release --target ${{ matrix.target }} --verbose
+      env:
+        RUST_BACKTRACE: 1
 
 
 
