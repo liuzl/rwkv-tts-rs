@@ -1,0 +1,34 @@
+[package]
+name = "rwkv-tts-rs"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = { version = "1.0", features = ["full"] }
+anyhow = "1.0"
+clap = "4.0"
+ndarray = "0.15.6"
+ort = { version = "2.0.0-rc.10" }
+hound = "3.5"
+memmap2 = "0.9"
+half = "2.4"
+wgpu = "26.0"
+safetensors = "0.6"
+web-rwkv = "0.10.15"
+serde_json = "1.0"
+rand = "0.8"
+regex = "1.0"
+
+ 
+
+[[bin]]
+name = "tts_cli"
+path = "bin/tts_cli.rs"
+
+[[bin]]
+name = "interactive_tts_cli"
+path = "bin/interactive_tts_cli.rs"
+
+ 
