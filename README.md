@@ -47,7 +47,10 @@ cargo build --release
 ## Requirements
 
 - Rust 1.70 or later
-- ONNX Runtime
+- ONNX Runtime library for neural network inference
+  - Windows: Download from [Microsoft ONNX Runtime releases](https://github.com/microsoft/onnxruntime/releases)
+  - Linux: Install via package manager or download prebuilt binaries
+  - macOS: Install via Homebrew `brew install onnxruntime` or download prebuilt binaries
 - Audio processing libraries
 
 ## License
