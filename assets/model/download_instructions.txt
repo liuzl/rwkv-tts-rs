@@ -30,7 +30,7 @@ assets/model/
 编译依赖：
 在编译本项目前，需要安装以下依赖：
 
-1. ONNX Runtime 库
+1. ONNX Runtime 库 (版本 1.22)
    - Windows: 从 https://github.com/microsoft/onnxruntime/releases 下载
    - Linux: 通过包管理器安装或下载预编译二进制文件
    - macOS: 使用 Homebrew 安装 `brew install onnxruntime`
