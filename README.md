@@ -2,6 +2,8 @@
 
 RWKV-based Text-to-Speech implementation in Rust.
 
+**Based on**: This project is a Rust implementation inspired by the original Python project [yueyulin/respark](https://huggingface.co/yueyulin/respark), which is a TTS system with RWKV-7 LM modeling audio tokens.
+
 ## Features
 
 - High-performance TTS generation using RWKV models
