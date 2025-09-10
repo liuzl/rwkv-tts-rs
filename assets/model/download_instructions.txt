@@ -1,0 +1,30 @@
+RWKV TTS 模型下载说明
+===================
+
+模型下载地址：https://huggingface.co/cgisky/rwkv-tts/
+
+下载步骤：
+1. 访问上述 Hugging Face 模型页面
+2. 下载以下必需的模型文件：
+   - RWKV 主模型文件 (.pth 或 .safetensors)
+   - 音频编码器模型
+   - 音频解码器模型
+   - 其他相关配置文件
+
+3. 将下载的模型文件放置在此目录 (assets/model/) 下
+
+文件结构示例：
+assets/model/
+├── rwkv_model.pth
+├── audio_encoder.onnx
+├── audio_decoder.onnx
+├── tokenizer.json (已包含)
+└── config.json
+
+注意事项：
+- 确保所有模型文件完整下载
+- 检查文件大小是否正确
+- 模型文件较大，请确保有足够的存储空间
+- 首次运行前请确认所有必需文件都已正确放置
+
+如有问题，请参考项目 README.md 或提交 Issue。
