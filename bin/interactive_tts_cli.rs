@@ -326,7 +326,10 @@ async fn generate_audio(
     };
 
     // 检查参考音频文件是否存在（Zero-shot模式）
-    if params.zero_shot && !params.ref_audio_path.is_empty() && !Path::new(&params.ref_audio_path).exists() {
+    if params.zero_shot
+        && !params.ref_audio_path.is_empty()
+        && !Path::new(&params.ref_audio_path).exists()
+    {
         return Err(format!("参考音频文件不存在: {}", params.ref_audio_path).into());
     }
 

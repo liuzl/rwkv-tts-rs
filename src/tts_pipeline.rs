@@ -280,10 +280,8 @@ impl TtsPipeline {
             println!("  开始BiCodecDetokenize解码...");
             // detokenizer 期望codec原始token域 [0..8191]，不需要做 -4096 平移
             // 为安全起见仅进行裁剪，避免越界
-            let semantic_clipped: Vec<i32> = semantic_tokens
-                .iter()
-                .map(|&v| v.clamp(0, 8191))
-                .collect();
+            let semantic_clipped: Vec<i32> =
+                semantic_tokens.iter().map(|&v| v.clamp(0, 8191)).collect();
             let global_clipped: Vec<i32> =
                 global_tokens.iter().map(|&v| v.clamp(0, 8191)).collect();
             let audio = utils.detokenize_audio(&global_clipped, &semantic_clipped)?;

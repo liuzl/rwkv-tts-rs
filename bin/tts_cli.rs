@@ -294,7 +294,10 @@ pub async fn main() -> Result<()> {
     }
 
     // 如果是Zero-shot模式且提供了参考音频路径，检查参考音频文件是否存在
-    if args.zero_shot && !args.ref_audio_path.is_empty() && !Path::new(&args.ref_audio_path).exists() {
+    if args.zero_shot
+        && !args.ref_audio_path.is_empty()
+        && !Path::new(&args.ref_audio_path).exists()
+    {
         eprintln!("❌ 错误: 参考音频文件不存在: {}", args.ref_audio_path);
         std::process::exit(1);
     }
