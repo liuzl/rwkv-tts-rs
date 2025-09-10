@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  release:
+    types: [ published ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: rwkv-tts-rs.exe
+            asset_name: rwkv-tts-rs-windows-x64.exe
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: rwkv-tts-rs
+            asset_name: rwkv-tts-rs-linux-x64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: rwkv-tts-rs
+            asset_name: rwkv-tts-rs-macos-x64
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+
+    - name: Cache cargo registry
+      uses: actions/cache@v3
+      with:
+        path: ~/.cargo/registry
+        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Cache cargo index
+      uses: actions/cache@v3
+      with:
+        path: ~/.cargo/git
+        key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Cache cargo build
+      uses: actions/cache@v3
+      with:
+        path: target
+        key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Install ONNX Runtime (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        $url = "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-1.22.0.zip"
+        Invoke-WebRequest -Uri $url -OutFile "onnxruntime.zip"
+        Expand-Archive -Path "onnxruntime.zip" -DestinationPath "."
+        $env:ORT_LIB_LOCATION = "$PWD\onnxruntime-win-x64-1.22.0\lib"
+        echo "ORT_LIB_LOCATION=$env:ORT_LIB_LOCATION" >> $env:GITHUB_ENV
+        $env:PATH += ";$PWD\onnxruntime-win-x64-1.22.0\lib"
+        echo "$PWD\onnxruntime-win-x64-1.22.0\lib" >> $env:GITHUB_PATH
+
+    - name: Install ONNX Runtime (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        wget https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-linux-x64-1.22.0.tgz
+        tar -xzf onnxruntime-linux-x64-1.22.0.tgz
+        export ORT_LIB_LOCATION="$PWD/onnxruntime-linux-x64-1.22.0/lib"
+        echo "ORT_LIB_LOCATION=$ORT_LIB_LOCATION" >> $GITHUB_ENV
+        export LD_LIBRARY_PATH="$PWD/onnxruntime-linux-x64-1.22.0/lib:$LD_LIBRARY_PATH"
+        echo "$PWD/onnxruntime-linux-x64-1.22.0/lib" >> $GITHUB_PATH
+
+    - name: Install ONNX Runtime (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        wget https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-osx-x86_64-1.22.0.tgz
+        tar -xzf onnxruntime-osx-x86_64-1.22.0.tgz
+        export ORT_LIB_LOCATION="$PWD/onnxruntime-osx-x86_64-1.22.0/lib"
+        echo "ORT_LIB_LOCATION=$ORT_LIB_LOCATION" >> $GITHUB_ENV
+        export DYLD_LIBRARY_PATH="$PWD/onnxruntime-osx-x86_64-1.22.0/lib:$DYLD_LIBRARY_PATH"
+        echo "$PWD/onnxruntime-osx-x86_64-1.22.0/lib" >> $GITHUB_PATH
+
+    - name: Build
+      run: cargo build --release --target ${{ matrix.target }}
+
+    - name: Run tests
+      run: cargo test --target ${{ matrix.target }}
+
+    - name: Prepare artifact
+      shell: bash
+      run: |
+        mkdir -p artifacts
+        if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+          cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} artifacts/${{ matrix.asset_name }}
+        else
+          cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} artifacts/${{ matrix.asset_name }}
+        fi
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ matrix.asset_name }}
+        path: artifacts/${{ matrix.asset_name }}
+
+  release:
+    name: Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+
+    - name: Upload release assets
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          rwkv-tts-rs-windows-x64.exe/*
+          rwkv-tts-rs-linux-x64/*
+          rwkv-tts-rs-macos-x64/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
