@@ -1,6 +1,12 @@
 RWKV TTS 模型下载说明
 ===================
 
+项目来源：
+本项目基于原始Python项目 yueyulin/respark 开发
+原项目地址：https://huggingface.co/yueyulin/respark
+
+Respark 是一个使用 RWKV-7 LM 建模音频tokens的TTS系统，采用了SparkTTS的BiCodec技术。
+
 模型下载地址：https://huggingface.co/cgisky/rwkv-tts/
 
 下载步骤：
