@@ -8,6 +8,16 @@ RWKV-based Text-to-Speech implementation in Rust.
 - Command-line interface for batch processing
 - Interactive CLI for real-time TTS
 - Support for multiple languages and voice characteristics
+- Zero-shot voice cloning with reference audio
+- Customizable voice properties (pitch, speed, energy)
+
+## Model Download
+
+**Important**: Before using this TTS system, you need to download the required RWKV TTS models.
+
+Download the models from: **https://huggingface.co/cgisky/rwkv-tts/**
+
+Place the downloaded model files in the `assets/model/` directory. See `assets/model/download_instructions.txt` for detailed instructions.
 
 ## Usage
 
@@ -21,11 +31,22 @@ cargo run --bin tts_cli -- --text "Hello, world!" --output output.wav
 cargo run --bin interactive_tts_cli
 ```
 
-## Building
+## Installation
+
+1. Clone this repository
+2. Download models from https://huggingface.co/cgisky/rwkv-tts/
+3. Place model files in `assets/model/` directory
+4. Build the project:
 
 ```bash
 cargo build --release
 ```
+
+## Requirements
+
+- Rust 1.70 or later
+- ONNX Runtime
+- Audio processing libraries
 
 ## License
 
