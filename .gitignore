@@ -1,0 +1,61 @@
+# Rust项目忽略文件
+
+# 编译输出
+/target/
+**/*.rs.bk
+
+# Cargo lock文件 (对于库项目可以忽略，对于应用项目建议保留)
+# Cargo.lock
+
+# IDE和编辑器文件
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 操作系统生成的文件
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# 日志文件
+*.log
+
+# 临时文件
+*.tmp
+*.temp
+
+# 用户指定忽略的目录
+.debug/
+.qoder/
+
+# 确保忽略这些目录下的所有内容
+.debug
+.qoder
+
+# 模型文件 (已在assets/model/.gitignore中处理)
+# *.onnx
+# *.safetensors
+
+# 其他可能的构建产物
+*.pdb
+*.exe
+*.dll
+
+# Rust特定
+**/*.rs.bk
+*.pdb
+
+# 备份文件
+*.bak
+*.backup
+
+# 环境变量文件
+.env
+.env.local
+.env.*.local
