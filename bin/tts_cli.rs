@@ -378,8 +378,8 @@ async fn run_tts_validation_test() -> Result<()> {
         // 创建默认参数
         let args = TtsPipelineArgs {
             text: text.to_string(),
-            model_path: "c:\\work\\rwkv-agent-kit\\model\\tts".to_string(),
-            vocab_path: "c:\\work\\rwkv-agent-kit\\model\\tts\\rwkv_vocab_v20230424_sparktts_spct_tokens.txt".to_string(),
+            model_path: "./assets/model".to_string(),
+            vocab_path: "./assets/model/tokenizer.json".to_string(),
             output_path: "./output".to_string(),
             temperature: 1.0,
             top_p: 0.95,
