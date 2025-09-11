@@ -152,7 +152,7 @@ impl RwkvSampler {
 
     /// 设置随机种子（启用确定性采样）。传None则关闭确定性模式。
     pub fn set_seed(&mut self, seed: Option<u64>) {
-        self.rng = seed.map(|s| StdRng::seed_from_u64(s));
+        self.rng = seed.map(StdRng::seed_from_u64);
     }
 
     /// 只读访问内部tokenizer（用于外部按相同方式编码属性）
@@ -415,7 +415,7 @@ impl RwkvSampler {
 
         // 数值稳定的 softmax：减去最大值并clamp指数区间
         let inv_t = 1.0 / temperature;
-        let mut scaled: Vec<f32> = indices.iter().map(|&i| logits[i] * inv_t).collect();
+        let scaled: Vec<f32> = indices.iter().map(|&i| logits[i] * inv_t).collect();
         let mut max_scaled = f32::NEG_INFINITY;
         for &v in &scaled {
             if v > max_scaled {
@@ -434,9 +434,7 @@ impl RwkvSampler {
         } else {
             // 退化为均匀分布（极端数值情况下）
             let uniform = 1.0 / (probs.len() as f32).max(1.0);
-            for p in &mut probs {
-                *p = uniform;
-            }
+            probs.fill(uniform);
         }
 
         // top-p截断（在排序后概率空间中）
