@@ -11,7 +11,7 @@ tokio = { version = "1.0", features = ["full"] }
 anyhow = "1.0"
 clap = "4.0"
 ndarray = "0.15.6"
-ort = { version = "2.0.0-rc.10" }
+ort = { version = "2.0.0-rc.10", features = ["load-dynamic"] }
 hound = "3.5"
 memmap2 = "0.9"
 half = "2.4"
