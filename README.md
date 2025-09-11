@@ -1,5 +1,9 @@
 # RWKV TTS Rust
 
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.78+-orange.svg)](https://www.rust-lang.org)
+[![Hugging Face](https://img.shields.io/badge/🤗-Hugging%20Face-yellow.svg)](https://huggingface.co/cgisky/rwkv-tts/tree/main)
+
 RWKV-based Text-to-Speech implementation in Rust.
 
 **Based on**: This project is a Rust implementation inspired by the original Python project [yueyulin/respark](https://huggingface.co/yueyulin/respark), which is a TTS system with RWKV-7 LM modeling audio tokens.
@@ -13,13 +17,18 @@ RWKV-based Text-to-Speech implementation in Rust.
 - Zero-shot voice cloning with reference audio
 - Customizable voice properties (pitch, speed, energy)
 
-## Model Download
 
-**Important**: Before using this TTS system, you need to download the required RWKV TTS models.
+## Installation
 
-Download the models from: **https://huggingface.co/cgisky/rwkv-tts/**
+```bash
+# linux/macOS
+sh build.sh
 
-Place the downloaded model files in the `assets/model/` directory. See `assets/model/download_instructions.txt` for detailed instructions.
+# windows
+.\build.ps1
+```
+
+> Model Source: https://huggingface.co/cgisky/rwkv-tts/
 
 ## Usage
 
@@ -88,17 +97,6 @@ cargo run --bin tts_cli -- --text "Validate this output" --validate
 ### Interactive CLI
 ```bash
 cargo run --bin interactive_tts_cli
-```
-
-## Installation
-
-1. Clone this repository
-2. Download models from https://huggingface.co/cgisky/rwkv-tts/
-3. Place model files in `assets/model/` directory
-4. Build the project:
-
-```bash
-cargo build --release
 ```
 
 ## Requirements
