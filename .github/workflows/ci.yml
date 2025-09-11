@@ -114,7 +114,7 @@ jobs:
     - name: Build
       run: |
         echo "Starting build for target: ${{ matrix.target }}"
-        cargo build --release --target ${{ matrix.target }} --verbose
+        cargo build --release --target ${{ matrix.target }} --bin tts_cli --verbose
       env:
         RUST_BACKTRACE: 1
 
@@ -145,6 +145,12 @@ jobs:
         mkdir -p release-package
         # Copy executable
         cp target/${{ matrix.target }}/release/tts_cli release-package/
+        # Copy ONNX Runtime dynamic library
+        if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+          cp onnxruntime-linux-x64-1.22.0/lib/libonnxruntime.so release-package/
+        elif [ "${{ matrix.os }}" = "macos-latest" ]; then
+          cp onnxruntime-osx-x86_64-1.22.0/lib/libonnxruntime.dylib release-package/
+        fi
         # Copy assets/model directory
         cp -r assets/model release-package/
         # Create tar.gz package

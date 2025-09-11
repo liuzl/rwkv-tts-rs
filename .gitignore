@@ -48,6 +48,8 @@ Thumbs.db
 *.pdb
 *.exe
 *.dll
+# 允许特定的运行时库文件
+!assets/ort/onnxruntime.dll
 
 # Rust特定
 **/*.rs.bk
