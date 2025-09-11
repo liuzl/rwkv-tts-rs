@@ -49,8 +49,8 @@ jobs:
             artifact_name: tts_cli
             asset_name: rwkv-tts-rs-linux-x64.tar.gz
           - os: macos-latest
-              target: x86_64-apple-darwin
-              artifact_name: tts_cli
+            target: x86_64-apple-darwin
+            artifact_name: tts_cli
             asset_name: rwkv-tts-rs-macos-x64.tar.gz
 
     steps:
