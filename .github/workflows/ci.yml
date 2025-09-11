@@ -120,35 +120,37 @@ jobs:
 
 
 
-    - name: Prepare artifact
+    - name: Prepare artifact (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path artifacts
+        # Create release directory structure
+        New-Item -ItemType Directory -Force -Path release-package
+        # Copy executable
+        Copy-Item "target\${{ matrix.target }}\release\${{ matrix.artifact_name }}" "release-package\"
+        # Copy onnxruntime.dll
+        Copy-Item "onnxruntime-win-x64-1.22.0\lib\onnxruntime.dll" "release-package\"
+        # Copy assets/model directory
+        Copy-Item -Recurse "assets\model" "release-package\"
+        # Create zip package
+        Compress-Archive -Path "release-package\*" -DestinationPath "artifacts\${{ matrix.asset_name }}"
+
+    - name: Prepare artifact (Linux/macOS)
+      if: matrix.os != 'windows-latest'
       shell: bash
       run: |
         mkdir -p artifacts
-        if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-          # Create release directory structure
-          mkdir -p release-package
-          # Copy executable
-          cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} release-package/
-          # Copy onnxruntime.dll
-          cp onnxruntime-win-x64-1.22.0/lib/onnxruntime.dll release-package/
-          # Copy assets/model directory
-          cp -r assets/model release-package/
-          # Create zip package
-          cd release-package
-          zip -r ../artifacts/${{ matrix.asset_name }} .
-          cd ..
-        else
-          # Create release directory structure for Linux/macOS
-          mkdir -p release-package
-          # Copy executable
-          cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} release-package/
-          # Copy assets/model directory
-          cp -r assets/model release-package/
-          # Create tar.gz package
-          cd release-package
-          tar -czf ../artifacts/${{ matrix.asset_name }} .
-          cd ..
-        fi
+        # Create release directory structure for Linux/macOS
+        mkdir -p release-package
+        # Copy executable
+        cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} release-package/
+        # Copy assets/model directory
+        cp -r assets/model release-package/
+        # Create tar.gz package
+        cd release-package
+        tar -czf ../artifacts/${{ matrix.asset_name }} .
+        cd ..
 
     - name: Upload to Release
       uses: softprops/action-gh-release@v1
