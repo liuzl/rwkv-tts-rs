@@ -110,6 +110,31 @@ cargo build --release
   - macOS: Install via Homebrew `brew install onnxruntime` or download prebuilt binaries
 - Audio processing libraries
 
+## ONNX Runtime Setup
+
+### Windows
+
+This project includes ONNX Runtime 1.22.1 for Windows. To configure the environment:
+
+**Option 1: Using PowerShell (Recommended)**
+```powershell
+.\setup_onnx.ps1
+cargo build --release
+```
+
+**Option 2: Using Command Prompt**
+```cmd
+setup_onnx.bat
+cargo build --release
+```
+
+**Option 3: Manual Setup**
+The build script (`build.rs`) automatically configures the ONNX Runtime paths during compilation.
+
+### Linux/macOS
+
+Install ONNX Runtime through your package manager or download prebuilt binaries from the official releases.
+
 ## License
 
 MIT License
