@@ -60,18 +60,42 @@ cargo run --bin tts_cli -- --text "Hello, world!" --output output.wav
 **Voice Characteristics:**
 - `--age <AGE>`: 说话人年龄 (Speaker age)
   - 可选值: `child`, `teenager`, `youth-adult`, `middle-aged`, `elderly`
-  - 默认值: `youth-adult`
+  - 数值区间: 
+    - `child`: 0-12岁
+    - `teenager`: 13-19岁
+    - `youth-adult`: 20-39岁 (默认)
+    - `middle-aged`: 40-64岁
+    - `elderly`: 65岁以上
 - `--gender <GENDER>`: 说话人性别 (Speaker gender)
-  - 可选值: `female`, `male`
-  - 默认值: `female`
+  - 可选值: `female` (默认), `male`
 - `--emotion <EMOTION>`: 情感 (Emotion)
-  - 可选值: `UNKNOWN`, `ANGRY`, `DISGUSTED`, `FEARFUL`, `HAPPY`, `NEUTRAL`, `SAD`, `SURPRISED`, `ANNOYED`, `TIRED`, `LAUGHING`, `TERRIFIED`, `SHOUTING`, `WHISPERING`, `UNFRIENDLY`, `ENUNCIATED`, `SINGING`, `QUESTIONING`, `CONFUSED`, `SERIOUS`, `SMILING`, `EXCITED`, `FRIENDLY`, `HUMOROUS`, `CONTEMPT`
-  - 默认值: `NEUTRAL`
+  - 可选值: `NEUTRAL` (默认), `ANGRY`, `DISGUSTED`, `FEARFUL`, `HAPPY`, `SAD`, `SURPRISED`, `ANNOYED`, `TIRED`, `LAUGHING`, `TERRIFIED`, `SHOUTING`, `WHISPERING`, `UNFRIENDLY`, `ENUNCIATED`, `SINGING`, `QUESTIONING`, `CONFUSED`, `SERIOUS`, `SMILING`, `EXCITED`, `FRIENDLY`, `HUMOROUS`, `CONTEMPT`, `UNKNOWN`
 - `--pitch <FLOAT>`: 音调 (Pitch)
-  - 数值范围，系统会自动分类为: `low_pitch`, `medium_pitch`, `high_pitch`, `very_high_pitch`
+  - 数值范围: 建议80-400Hz
+  - 系统会根据性别和年龄自动分类为:
+    - `low_pitch` (低音调)
+    - `medium_pitch` (中音调) 
+    - `high_pitch` (高音调)
+    - `very_high_pitch` (极高音调)
+  - 分类区间示例 (女性青年):
+    - low_pitch: <191Hz
+    - medium_pitch: 191-211Hz
+    - high_pitch: 211-232Hz
+    - very_high_pitch: >232Hz
+  - 分类区间示例 (男性青年):
+    - low_pitch: <115Hz
+    - medium_pitch: 115-131Hz
+    - high_pitch: 131-153Hz
+    - very_high_pitch: >153Hz
   - 默认值: `200.0`
 - `--speed <FLOAT>`: 语速 (Speech speed)
-  - 数值范围，系统会自动分类为: `very_slow`, `slow`, `medium`, `fast`, `very_fast`
+  - 数值范围: 1.0-10.0
+  - 分类区间:
+    - `very_slow`: ≤3.5
+    - `slow`: 3.5-4.0
+    - `medium`: 4.0-4.5
+    - `fast`: 4.5-5.0
+    - `very_fast`: >5.0
   - 默认值: `4.2`
 
 **Zero-shot Voice Cloning:**
