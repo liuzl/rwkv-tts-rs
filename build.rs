@@ -4,7 +4,9 @@ use std::path::PathBuf;
 fn main() {
     // 获取项目根目录
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    let onnx_dir = PathBuf::from(&manifest_dir).join("onnxruntime-win-x64-1.22.1");
+    let primary = PathBuf::from(&manifest_dir).join("第三方库源码").join("onnxruntime-win-x64-1.22.1");
+    let fallback = PathBuf::from(&manifest_dir).join("onnxruntime-win-x64-1.22.1");
+    let onnx_dir = if primary.exists() { primary } else { fallback };
     
     // 设置ONNX Runtime库路径
     let lib_dir = onnx_dir.join("lib");

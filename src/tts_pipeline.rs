@@ -131,18 +131,20 @@ impl TtsPipeline {
     /// * `args` - TTS流水线参数
     ///
     /// # Returns
-    /// * `String` - 属性tokens
-    fn generate_property_tokens(&self, args: &TtsPipelineArgs) -> String {
+    /// * `Vec<i32>` - 属性token ID数组
+    fn generate_property_tokens(&self, args: &TtsPipelineArgs) -> Vec<i32> {
         if args.zero_shot {
-            // Zero-shot模式下，tokenize已在generate_speech中处理，这里仅返回占位字符串，稍后会被覆盖
-            "".to_string()
+            // Zero-shot模式下，tokenize已在generate_speech中处理，这里仅返回空数组
+            vec![]
         } else {
+            // 解析age字符串为数字
+            let age_num = args.age.parse::<u8>().unwrap_or(25);
             properties_util::convert_properties_to_tokens(
-                &args.age,
+                args.speed,
+                args.pitch,
+                age_num,
                 &args.gender,
                 &args.emotion,
-                args.pitch,
-                args.speed,
             )
         }
     }
@@ -166,13 +168,13 @@ impl TtsPipeline {
         println!("  处理后文本: {}", processed_text);
 
         // 生成属性tokens
-        let property_tokens_str = {
+        let (property_tokens_str, property_tokens) = {
             // 因为tokenize需要&mut self，所以这里临时可变借用ref_audio_utilities
             if args.zero_shot {
                 if let Some(ref mut utils) = self.ref_audio_utilities {
                     match utils.tokenize(&args.ref_audio_path) {
                         Ok((global_tokens, semantic_tokens)) => {
-                            format!(
+                            let tokens_str = format!(
                                 "GLOBAL:{} SEMANTIC:{}",
                                 global_tokens
                                     .iter()
@@ -184,32 +186,43 @@ impl TtsPipeline {
                                     .map(|t| t.to_string())
                                     .collect::<Vec<_>>()
                                     .join(","),
-                            )
+                            );
+                            (tokens_str, vec![])
                         }
-                        Err(_) => properties_util::convert_properties_to_tokens(
-                            &args.age,
-                            &args.gender,
-                            &args.emotion,
-                            args.pitch,
-                            args.speed,
-                        ),
+                        Err(_) => {
+                            let age_num = args.age.parse::<u8>().unwrap_or(25);
+                            let tokens = properties_util::convert_properties_to_tokens(
+                                args.speed,
+                                args.pitch,
+                                age_num,
+                                &args.gender,
+                                &args.emotion,
+                            );
+                            let tokens_str = format!("TOKENS:{}", tokens.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(","));
+                            (tokens_str, tokens)
+                        }
                     }
                 } else {
-                    properties_util::convert_properties_to_tokens(
-                        &args.age,
+                    let age_num = args.age.parse::<u8>().unwrap_or(25);
+                    let tokens = properties_util::convert_properties_to_tokens(
+                        args.speed,
+                        args.pitch,
+                        age_num,
                         &args.gender,
                         &args.emotion,
-                        args.pitch,
-                        args.speed,
-                    )
+                    );
+                    let tokens_str = format!("TOKENS:{}", tokens.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(","));
+                    (tokens_str, tokens)
                 }
             } else {
-                self.generate_property_tokens(args)
+                let tokens = self.generate_property_tokens(args);
+                let tokens_str = format!("TOKENS:{}", tokens.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(","));
+                (tokens_str, tokens)
             }
         };
         println!("  属性tokens: {}", property_tokens_str);
-        // 将属性tokens字符串转换为整数序列（如果包含GLOBAL/SEMANTIC则解析，否则通过tokenizer编码）
-        let mut property_tokens: Vec<i32> = Vec::new();
+        // 处理属性tokens（如果包含GLOBAL/SEMANTIC则解析，否则使用已生成的property_tokens）
+        let mut final_property_tokens = property_tokens;
         let mut ref_global_tokens: Option<Vec<i32>> = None;
         let mut ref_semantic_tokens: Option<Vec<i32>> = None;
         if property_tokens_str.starts_with("GLOBAL:") {
@@ -230,6 +243,10 @@ impl TtsPipeline {
                     ref_semantic_tokens = Some(vals);
                 }
             }
+            // 对于GLOBAL/SEMANTIC格式，清空property_tokens
+            final_property_tokens = vec![];
+        } else if property_tokens_str.starts_with("TOKENS:") {
+            // 已经有了property_tokens，无需额外处理
         } else {
             // 将属性tokens字符串通过tokenizer编码为整数ID序列
             let ids_u32 = self
@@ -237,7 +254,7 @@ impl TtsPipeline {
                 .tokenizer()
                 .encode(property_tokens_str.as_bytes())
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-            property_tokens = ids_u32.into_iter().map(|x| x as i32).collect();
+            final_property_tokens = ids_u32.into_iter().map(|x| x as i32).collect();
         }
 
         // 创建采样参数
@@ -257,7 +274,7 @@ impl TtsPipeline {
             .rwkv_sampler
             .generate_tts_tokens(
                 &processed_text,
-                &property_tokens,
+                &final_property_tokens,
                 ref_global_tokens.as_deref(),
                 ref_semantic_tokens.as_deref(),
                 &sampler_args,

@@ -1,0 +1,8 @@
+transformers
+numpy
+scipy
+onnxruntime-gpu
+questionary
+soundfile
+click
+librosa
