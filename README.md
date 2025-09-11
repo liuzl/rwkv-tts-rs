@@ -58,11 +58,21 @@ cargo run --bin tts_cli -- --text "Hello, world!" --output output.wav
 - `--max-tokens <INT>`: 最大生成token数 (Maximum tokens to generate, default: `8000`)
 
 **Voice Characteristics:**
-- `--age <AGE>`: 说话人年龄 (Speaker age, default: `youth-adult`)
-- `--gender <GENDER>`: 说话人性别 (Speaker gender, default: `female`)
-- `--emotion <EMOTION>`: 情感 (Emotion, default: `NEUTRAL`)
-- `--pitch <FLOAT>`: 音调 (Pitch, default: `200.0`)
-- `--speed <FLOAT>`: 语速 (Speech speed, default: `4.2`)
+- `--age <AGE>`: 说话人年龄 (Speaker age)
+  - 可选值: `child`, `teenager`, `youth-adult`, `middle-aged`, `elderly`
+  - 默认值: `youth-adult`
+- `--gender <GENDER>`: 说话人性别 (Speaker gender)
+  - 可选值: `female`, `male`
+  - 默认值: `female`
+- `--emotion <EMOTION>`: 情感 (Emotion)
+  - 可选值: `UNKNOWN`, `ANGRY`, `DISGUSTED`, `FEARFUL`, `HAPPY`, `NEUTRAL`, `SAD`, `SURPRISED`, `ANNOYED`, `TIRED`, `LAUGHING`, `TERRIFIED`, `SHOUTING`, `WHISPERING`, `UNFRIENDLY`, `ENUNCIATED`, `SINGING`, `QUESTIONING`, `CONFUSED`, `SERIOUS`, `SMILING`, `EXCITED`, `FRIENDLY`, `HUMOROUS`, `CONTEMPT`
+  - 默认值: `NEUTRAL`
+- `--pitch <FLOAT>`: 音调 (Pitch)
+  - 数值范围，系统会自动分类为: `low_pitch`, `medium_pitch`, `high_pitch`, `very_high_pitch`
+  - 默认值: `200.0`
+- `--speed <FLOAT>`: 语速 (Speech speed)
+  - 数值范围，系统会自动分类为: `very_slow`, `slow`, `medium`, `fast`, `very_fast`
+  - 默认值: `4.2`
 
 **Zero-shot Voice Cloning:**
 - `--zero-shot`: 启用Zero-shot模式 (Enable zero-shot mode)
@@ -89,10 +99,6 @@ cargo run --bin tts_cli -- --text "Hello, world!" --gender male --age adult --em
 cargo run --bin tts_cli -- --text "Clone this voice" --zero-shot --ref-audio ./reference.wav --prompt-text "Sample text"
 ```
 
-**With Validation:**
-```bash
-cargo run --bin tts_cli -- --text "Validate this output" --validate
-```
 
 ### Interactive CLI
 ```bash
