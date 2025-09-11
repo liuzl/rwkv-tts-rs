@@ -1,6 +1,6 @@
 [package]
 name = "rwkv-tts-rs"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 build = "build.rs"
 
@@ -21,6 +21,7 @@ web-rwkv = "0.10.15"
 serde_json = "1.0"
 rand = "0.8"
 regex = "1.0"
+sha2 = "0.10"
 
  
 
@@ -28,8 +29,3 @@ regex = "1.0"
 name = "tts_cli"
 path = "bin/tts_cli.rs"
 
-[[bin]]
-name = "interactive_tts_cli"
-path = "bin/interactive_tts_cli.rs"
-
- 

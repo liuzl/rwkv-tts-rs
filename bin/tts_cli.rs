@@ -10,41 +10,6 @@ use anyhow::Result;
 // 引入本地模块
 use rwkv_tts_rs::{TtsPipeline, TtsPipelineArgs};
 
-// TTS特殊tokens定义
-// 注意：这些常量目前未被使用，如果需要使用请取消注释
-// const TTS_TAG_0: u32 = 8193;
-// const TTS_TAG_1: u32 = 8194;
-// const TTS_TAG_2: u32 = 8195;
-// const TTS_END_TOKEN: u32 = 8192;
-// const GLOBAL_TOKEN_OFFSET: u32 = 8196;
-
-// Web-RWKV imports for RWKV model
-// 注意：这些导入目前未被使用，如果需要使用请取消注释
-// use web_rwkv::{
-//     runtime::infer::Rnn,
-//     tokenizer::Tokenizer,
-//     runtime::Runtime,
-// };
-
-// use rand::Rng;
-// use std::time::Instant;
-
-// 语言检测功能
-// 注意：此函数目前未被使用，如果需要使用请取消注释
-// fn detect_token_lang(token: &str) -> &'static str {
-//     let zh_regex = Regex::new(r"[\u4e00-\u9fff]").unwrap();
-//     let en_regex = Regex::new(r"[A-Za-z]").unwrap();
-//
-//     let has_zh = zh_regex.is_match(token);
-//     let has_en = en_regex.is_match(token);
-//
-//     match (has_zh, has_en) {
-//         (true, false) => "zh",
-//         (false, true) => "en",
-//         (true, true) => "zh", // 混合时优先中文
-//         (false, false) => "en", // 默认英文
-//     }
-// }
 
 /// 生成唯一的文件名
 fn get_unique_filename(output_dir: &str, text: &str, extension: &str) -> String {
@@ -128,7 +93,7 @@ pub fn parse_args() -> TtsPipelineArgs {
                 .long("top-p")
                 .value_name("FLOAT")
                 .help("Top-p采样参数")
-                .default_value("0.95"),
+                .default_value("0.90"),
         )
         .arg(
             Arg::new("top_k")
@@ -180,6 +145,12 @@ pub fn parse_args() -> TtsPipelineArgs {
                 .default_value("4.2"),
         )
         .arg(
+            Arg::new("seed")
+                .long("seed")
+                .value_name("INT")
+                .help("随机种子（启用确定性采样）"),
+        )
+        .arg(
             Arg::new("validate")
                 .long("validate")
                 .value_name("VALIDATE")
@@ -224,7 +195,7 @@ pub fn parse_args() -> TtsPipelineArgs {
             .get_one::<String>("top_p")
             .unwrap()
             .parse()
-            .unwrap_or(0.85),
+            .unwrap_or(0.90),
         top_k: matches
             .get_one::<String>("top_k")
             .unwrap()
@@ -258,6 +229,9 @@ pub fn parse_args() -> TtsPipelineArgs {
             .cloned()
             .unwrap_or_default(),
         validate: matches.get_flag("validate"),
+        seed: matches
+            .get_one::<String>("seed")
+            .and_then(|s| s.parse::<u64>().ok()),
     }
 }
 
@@ -316,6 +290,10 @@ pub async fn main() -> Result<()> {
     println!("  情感: {}", args.emotion);
     println!("  音调: {}", args.pitch);
     println!("  语速: {}", args.speed);
+    match args.seed {
+        Some(s) => println!("  采样Seed: {} (启用确定性采样)", s),
+        None => println!("  采样Seed: 随机"),
+    }
     println!("  Zero-shot模式: {}", args.zero_shot);
     if args.zero_shot && !args.ref_audio_path.is_empty() {
         println!("  参考音频路径: {}", args.ref_audio_path);
@@ -382,7 +360,7 @@ async fn run_tts_validation_test() -> Result<()> {
             vocab_path: "./assets/model/tokenizer.json".to_string(),
             output_path: "./output".to_string(),
             temperature: 1.0,
-            top_p: 0.95,
+            top_p: 0.90,
             top_k: 50,
             max_tokens: 3000,
             age: "youth-adult".to_string(),
@@ -394,6 +372,7 @@ async fn run_tts_validation_test() -> Result<()> {
             ref_audio_path: String::new(),
             prompt_text: String::new(),
             validate: false,
+            seed: None,
         };
 
         // 尝试创建TTS流水线
@@ -434,125 +413,26 @@ async fn run_tts_validation_test() -> Result<()> {
                                 println!("  💾 音频已保存到: {}", output_filename);
                                 passed_tests += 1;
                             }
-                            Err(e) => println!("  ⚠️ 保存音频文件失败: {:?}", e),
+                            Err(e) => {
+                                println!("  ❌ 保存音频失败: {}", e);
+                            }
                         }
                     }
                     Err(e) => {
-                        println!("  ❌ {} 测试失败: {:?}", description, e);
+                        println!("  ❌ 生成语音失败: {}", e);
                     }
                 }
             }
             Err(e) => {
-                println!("  ❌ {} TTS流水线创建失败: {:?}", description, e);
+                println!("  ❌ 创建流水线失败: {}", e);
             }
         }
     }
 
     println!(
-        "\n📊 TTS验证测试结果: {}/{} 测试通过",
+        "\n✅ 测试完成: 通过 {}/{} 个测试用例",
         passed_tests, total_tests
     );
-    if passed_tests == total_tests {
-        println!("🎉 所有TTS验证测试通过！");
-    } else {
-        println!("⚠️  部分TTS验证测试失败");
-    }
 
     Ok(())
 }
-
-// 使用ASR验证生成的音频是否正确
-// 注意：此函数目前未被使用，如果需要使用请取消注释
-// fn validate_audio_with_asr(_audio_file: &str, _expected_text: &str) -> Result<()> {
-//     println!("🔄 ASR验证功能暂未实现");
-//     Ok(())
-// }
-
-// 验证结果结构
-// 注意：此结构体目前未被使用，如果需要使用请取消注释
-// #[derive(Debug)]
-// struct TtsValidationResult {
-//     is_valid: bool,
-//     issues: Vec<String>,
-//     global_tokens_count: usize,
-//     semantic_tokens_count: usize,
-//     has_end_token: bool,
-// }
-
-// 采样函数 - 实现Nucleus Sampling算法
-// 注意：此函数目前未被使用，如果需要使用请取消注释
-// fn sample_logits(logits: &[f32], vocab_size: usize, temperature: f32, top_k: usize, top_p: f32) -> usize {
-//     // 确保温度不为0
-//     let temperature = temperature.max(0.1);
-//
-//     // 创建索引数组
-//     let mut indices: Vec<usize> = (0..vocab_size.min(logits.len())).collect();
-//
-//     // 如果top_k为0或大于vocab_size，则使用vocab_size
-//     let top_k = if top_k == 0 || top_k > vocab_size { vocab_size } else { top_k };
-//
-//     // 特殊情况：如果top_k为1或top_p接近0，直接返回最大值索引
-//     if top_k == 1 || top_p < 1e-4 {
-//         return indices.iter()
-//             .max_by(|&&a, &&b| logits[a].partial_cmp(&logits[b]).unwrap())
-//             .copied()
-//             .unwrap_or(0);
-//     }
-//
-//     // 按logits值降序排序索引
-//     indices.sort_by(|&a, &b| logits[b].partial_cmp(&logits[a]).unwrap());
-//
-//     // 只保留top_k个最高的logits
-//     indices.truncate(top_k);
-//
-//     // 计算softmax概率
-//     let mut probs: Vec<f32> = indices.iter().map(|&i| {
-//         (logits[i] / temperature).exp()
-//     }).collect();
-//
-//     // 归一化概率
-//     let sum: f32 = probs.iter().sum();
-//     if sum > 0.0 {
-//         for prob in &mut probs {
-//             *prob /= sum;
-//         }
-//     }
-//
-//     // Top-p (nucleus) filtering
-//     let mut cumsum = 0.0;
-//     let mut cutoff_index = probs.len();
-//     for (i, &prob) in probs.iter().enumerate() {
-//         cumsum += prob;
-//         if cumsum >= top_p {
-//             cutoff_index = i + 1;
-//             break;
-//         }
-//     }
-//
-//     // 截断到top-p范围
-//     indices.truncate(cutoff_index);
-//     probs.truncate(cutoff_index);
-//
-//     // 再次归一化概率
-//     let sum: f32 = probs.iter().sum();
-//     if sum > 0.0 {
-//         for prob in &mut probs {
-//             *prob /= sum;
-//         }
-//     }
-//
-//     // 随机采样
-//     let mut rng = rand::thread_rng();
-//     let random_value: f32 = rng.gen();
-//
-//     let mut cumsum = 0.0;
-//     for (i, &prob) in probs.iter().enumerate() {
-//         cumsum += prob;
-//         if random_value <= cumsum {
-//             return indices[i];
-//         }
-//     }
-//
-//     // 如果由于浮点数精度问题没有返回，返回最后一个索引
-//     *indices.last().unwrap_or(&0)
-// }

@@ -104,6 +104,7 @@ pub mod tts_generator {
                 prompt_text: args.prompt_text.clone(),
                 output_path: args.output_path.clone(),
                 validate: args.validate,
+                seed: None,
             };
 
             // 创建TTS流水线

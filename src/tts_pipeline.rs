@@ -31,6 +31,8 @@ pub struct TtsPipelineArgs {
     pub output_path: String,
     // 新增字段：是否启用验证
     pub validate: bool,
+    // 新增字段：确定性采样用随机种子（None表示非确定性）
+    pub seed: Option<u64>,
 }
 
 impl Default for TtsPipelineArgs {
@@ -40,7 +42,7 @@ impl Default for TtsPipelineArgs {
             model_path: String::new(),
             vocab_path: String::new(),
             temperature: 1.0,
-            top_p: 0.95,
+            top_p: 0.90, // 稍微收紧默认top_p
             top_k: 0,
             max_tokens: 8000,
             age: "youth-adult".to_string(),
@@ -53,6 +55,7 @@ impl Default for TtsPipelineArgs {
             prompt_text: String::new(),
             output_path: String::from("./output"),
             validate: false,
+            seed: None,
         }
     }
 }
@@ -162,6 +165,8 @@ impl TtsPipeline {
         println!("  模型路径: {}", args.model_path);
         println!("  词表路径: {}", args.vocab_path);
         println!("  Zero-shot模式: {}", args.zero_shot);
+        if let Some(seed) = args.seed { println!("  采样种子: {} (启用确定性采样)", seed); }
+        println!("  采样参数: temperature={} top_p={} top_k={} max_tokens={}", args.temperature, args.top_p, args.top_k, args.max_tokens);
 
         // 处理文本
         let processed_text = self.process_text(&args.text);
@@ -263,6 +268,7 @@ impl TtsPipeline {
             top_p: args.top_p,
             top_k: args.top_k,
             max_tokens: args.max_tokens,
+            seed: args.seed,
         };
 
         // 重置RWKV运行时状态

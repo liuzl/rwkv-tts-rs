@@ -13,6 +13,7 @@
 *.swp
 *.swo
 *~
+*.wav
 
 /onnxruntime-win-x64-1.22.1/
 

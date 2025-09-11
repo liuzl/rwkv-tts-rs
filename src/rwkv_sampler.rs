@@ -4,7 +4,10 @@
 use anyhow::Result;
 use memmap2::Mmap;
 use rand::Rng;
+use rand::SeedableRng;
+use rand::rngs::StdRng;
 use safetensors::SafeTensors;
+use sha2::{Digest, Sha256};
 use std::path::Path;
 use web_rwkv::{
     context::{ContextBuilder, InstanceExt},
@@ -25,6 +28,8 @@ pub struct SamplerArgs {
     pub top_p: f32,
     pub top_k: usize,
     pub max_tokens: usize,
+    // 可选随机种子：提供则启用确定性采样
+    pub seed: Option<u64>,
 }
 
 impl Default for SamplerArgs {
@@ -34,6 +39,7 @@ impl Default for SamplerArgs {
             top_p: 0.85,
             top_k: 0,
             max_tokens: 100,
+            seed: None,
         }
     }
 }
@@ -49,6 +55,8 @@ pub const GLOBAL_TOKEN_OFFSET: i32 = 8196;
 pub struct RwkvSampler {
     runtime: Box<dyn Runtime<Rnn>>, // 使用TokioRuntime封装Bundle
     tokenizer: Tokenizer,
+    // 带种子的RNG（可选，启用则实现确定性采样）
+    rng: Option<StdRng>,
 }
 impl RwkvSampler {
     /// 创建新的RWKV采样器
@@ -71,9 +79,6 @@ impl RwkvSampler {
             return Err(anyhow::anyhow!("词表文件不存在: {}", vocab_path));
         }
 
-        // 创建上下文（选择高性能适配器）
-        // 延后到读取 ModelInfo 后再创建 Context（见下文 auto_limits）
-
         // 解析模型文件路径：
         // - 若传入目录，则默认加载其中的 "webrwkv.safetensors"
         // - 若传入文件，则直接使用该文件
@@ -91,7 +96,18 @@ impl RwkvSampler {
 
         // 加载并反序列化SafeTensors模型
         let file = std::fs::File::open(&model_file_path)?;
+        let file_size = file.metadata()?.len();
         let data = unsafe { Mmap::map(&file)? };
+
+        // 模型完整性校验：打印大小与SHA256
+        let mut hasher = Sha256::new();
+        hasher.update(&data[..]);
+        let hash_bytes = hasher.finalize();
+        let sha256 = hash_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+        println!("🔒 模型检验: {}", model_file_path.display());
+        println!("   - 大小: {} bytes", file_size);
+        println!("   - SHA256: {}", sha256);
+
         let model = SafeTensors::deserialize(&data)?;
 
         // 基于模型信息自动配置 Context 的硬件 limits
@@ -100,6 +116,20 @@ impl RwkvSampler {
         let adapter = instance
             .adapter(wgpu::PowerPreference::HighPerformance)
             .await?;
+
+        // 打印适配器/后端/驱动与精度
+        let adapter_info = adapter.get_info();
+        println!("🖥️ 选用GPU适配器: {}", adapter_info.name);
+        println!(
+            "   - 后端: {:?} | 供应商: {:#06x} 设备: {:#06x} | 类型: {:?}",
+            adapter_info.backend, adapter_info.vendor, adapter_info.device, adapter_info.device_type
+        );
+        println!(
+            "   - 驱动: {} | 详情: {}",
+            adapter_info.driver, adapter_info.driver_info
+        );
+        println!("   - 使用 FP32 推理: true (v7::Bundle::<f32>)");
+
         let context = ContextBuilder::new(adapter)
             .auto_limits(&info)
             .build()
@@ -117,7 +147,12 @@ impl RwkvSampler {
         let vocab_content = std::fs::read_to_string(vocab_path)?;
         let tokenizer = Tokenizer::new(&vocab_content)?;
 
-        Ok(Self { runtime, tokenizer })
+        Ok(Self { runtime, tokenizer, rng: None })
+    }
+
+    /// 设置随机种子（启用确定性采样）。传None则关闭确定性模式。
+    pub fn set_seed(&mut self, seed: Option<u64>) {
+        self.rng = seed.map(|s| StdRng::seed_from_u64(s));
     }
 
     /// 只读访问内部tokenizer（用于外部按相同方式编码属性）
@@ -127,6 +162,9 @@ impl RwkvSampler {
 
     /// 生成文本（示例）
     pub async fn generate_text(&mut self, prompt: &str, args: &SamplerArgs) -> Result<String> {
+        // 若提供了种子，设置确定性采样
+        self.set_seed(args.seed);
+
         // 编码prompt
         let prompt_tokens: Vec<u32> = self
             .tokenizer
@@ -184,6 +222,9 @@ impl RwkvSampler {
         _ref_semantic_tokens: Option<&[i32]>,
         args: &SamplerArgs,
     ) -> Result<(Vec<i32>, Vec<i32>)> {
+        // 若提供了种子，设置确定性采样
+        self.set_seed(args.seed);
+
         // 编码文本：使用原始文本token（不加任何偏移）以匹配参考实现
         let text_tokens_u32: Vec<u32> = self
             .tokenizer
@@ -362,7 +403,7 @@ impl RwkvSampler {
             return best;
         }
 
-        // 按logits降序排序
+        // 按logits降序排序（与softmax排序一致）
         indices.sort_by(|&a, &b| {
             logits[b]
                 .partial_cmp(&logits[a])
@@ -372,19 +413,33 @@ impl RwkvSampler {
             indices.truncate(top_k);
         }
 
-        // 计算softmax概率（带温度）
-        let mut probs: Vec<f32> = indices
-            .iter()
-            .map(|&i| (logits[i] / temperature).exp())
+        // 数值稳定的 softmax：减去最大值并clamp指数区间
+        let inv_t = 1.0 / temperature;
+        let mut scaled: Vec<f32> = indices.iter().map(|&i| logits[i] * inv_t).collect();
+        let mut max_scaled = f32::NEG_INFINITY;
+        for &v in &scaled {
+            if v > max_scaled {
+                max_scaled = v;
+            }
+        }
+        let mut probs: Vec<f32> = scaled
+            .into_iter()
+            .map(|v| ((v - max_scaled).clamp(-80.0, 80.0)).exp())
             .collect();
         let mut sum: f32 = probs.iter().sum();
-        if sum > 0.0 {
+        if sum > 0.0 && sum.is_finite() {
             for p in &mut probs {
                 *p /= sum;
             }
+        } else {
+            // 退化为均匀分布（极端数值情况下）
+            let uniform = 1.0 / (probs.len() as f32).max(1.0);
+            for p in &mut probs {
+                *p = uniform;
+            }
         }
 
-        // top-p截断
+        // top-p截断（在排序后概率空间中）
         if top_p < 1.0 {
             let mut cumsum = 0.0;
             let mut cutoff = probs.len();
@@ -401,16 +456,20 @@ impl RwkvSampler {
             }
             // 再归一化
             sum = probs.iter().sum();
-            if sum > 0.0 {
+            if sum > 0.0 && sum.is_finite() {
                 for p in &mut probs {
                     *p /= sum;
                 }
             }
         }
 
-        // 按概率采样
-        let mut rng = rand::thread_rng();
-        let r: f32 = rng.gen();
+        // 按概率采样（支持确定性RNG）
+        let r: f32 = if let Some(rng) = &mut self.rng {
+            rng.gen()
+        } else {
+            let mut rng = rand::thread_rng();
+            rng.gen()
+        };
         let mut cumsum = 0.0;
         for (i, &p) in probs.iter().enumerate() {
             cumsum += p;
