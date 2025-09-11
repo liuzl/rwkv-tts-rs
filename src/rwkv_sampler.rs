@@ -2,7 +2,6 @@
 //! 实现基于web-rwkv库的RWKV模型推理和采样功能
 
 use anyhow::Result;
-use half::f16;
 use memmap2::Mmap;
 use rand::Rng;
 use safetensors::SafeTensors;
@@ -110,8 +109,8 @@ impl RwkvSampler {
         let builder = ModelBuilder::new(&context, model);
         let model = builder.build_v7().await?;
 
-        // 创建Bundle与TokioRuntime（f16 与官方示例保持一致）
-        let bundle = v7::Bundle::<f16>::new(model, 1);
+        // 创建Bundle与TokioRuntime（切换为 f32 以启用 FP32 推理）
+        let bundle = v7::Bundle::<f32>::new(model, 1);
         let runtime: Box<dyn Runtime<Rnn>> = Box::new(TokioRuntime::new(bundle).await);
 
         // 加载tokenizer
