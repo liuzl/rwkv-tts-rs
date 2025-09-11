@@ -1,92 +1,99 @@
 //! 属性处理工具模块
 //! 实现与Python版本properties_util.py相同的功能
 
+/// TTS特殊token偏移量，对应C++中的tts_special_token_offset
+const TTS_SPECIAL_TOKEN_OFFSET: i32 = 77823;
+
 /// 速度映射表
-const SPEED_MAP: &[(&str, &str)] = &[
-    ("very_slow", "SPCT_1"),
-    ("slow", "SPCT_2"),
-    ("medium", "SPCT_3"),
-    ("fast", "SPCT_4"),
-    ("very_fast", "SPCT_5"),
+const SPEED_MAP: &[(&str, i32)] = &[
+    ("very_slow", 1),
+    ("slow", 2),
+    ("medium", 3),
+    ("fast", 4),
+    ("very_fast", 5),
 ];
 
 /// 音高映射表
-const PITCH_MAP: &[(&str, &str)] = &[
-    ("low_pitch", "SPCT_6"),
-    ("medium_pitch", "SPCT_7"),
-    ("high_pitch", "SPCT_8"),
-    ("very_high_pitch", "SPCT_9"),
+const PITCH_MAP: &[(&str, i32)] = &[
+    ("low_pitch", 6),
+    ("medium_pitch", 7),
+    ("high_pitch", 8),
+    ("very_high_pitch", 9),
 ];
 
 /// 年龄映射表
-const AGE_MAP: &[(&str, &str)] = &[
-    ("child", "SPCT_13"),
-    ("teenager", "SPCT_14"),
-    ("youth-adult", "SPCT_15"),
-    ("middle-aged", "SPCT_16"),
-    ("elderly", "SPCT_17"),
+const AGE_MAP: &[(&str, i32)] = &[
+    ("child", 13),
+    ("teenager", 14),
+    ("youth-adult", 15),
+    ("middle-aged", 16),
+    ("elderly", 17),
 ];
 
 /// 性别映射表
-const GENDER_MAP: &[(&str, &str)] = &[("female", "SPCT_46"), ("male", "SPCT_47")];
+const GENDER_MAP: &[(&str, i32)] = &[("female", 46), ("male", 47)];
 
 /// 情感映射表
-const EMOTION_MAP: &[(&str, &str)] = &[
-    ("UNKNOWN", "SPCT_21"),
-    ("NEUTRAL", "SPCT_22"),
-    ("ANGRY", "SPCT_23"),
-    ("HAPPY", "SPCT_24"),
-    ("SAD", "SPCT_25"),
-    ("FEARFUL", "SPCT_26"),
-    ("DISGUSTED", "SPCT_27"),
-    ("SURPRISED", "SPCT_28"),
-    ("SARCASTIC", "SPCT_29"),
-    ("EXCITED", "SPCT_30"),
-    ("SLEEPY", "SPCT_31"),
-    ("CONFUSED", "SPCT_32"),
-    ("EMPHASIS", "SPCT_33"),
-    ("LAUGHING", "SPCT_34"),
-    ("SINGING", "SPCT_35"),
-    ("WORRIED", "SPCT_36"),
-    ("WHISPER", "SPCT_37"),
-    ("ANXIOUS", "SPCT_38"),
-    ("NO-AGREEMENT", "SPCT_39"),
-    ("APOLOGETIC", "SPCT_40"),
-    ("CONCERNED", "SPCT_41"),
-    ("ENUNCIATED", "SPCT_42"),
-    ("ASSERTIVE", "SPCT_43"),
-    ("ENCOURAGING", "SPCT_44"),
-    ("CONTEMPT", "SPCT_45"),
+const EMOTION_MAP: &[(&str, i32)] = &[
+    ("UNKNOWN", 21),
+    ("ANGRY", 22),
+    ("DISGUSTED", 23),
+    ("FEARFUL", 24),
+    ("HAPPY", 25),
+    ("NEUTRAL", 26),
+    ("SAD", 27),
+    ("SURPRISED", 28),
+    ("ANNOYED", 29),
+    ("TIRED", 30),
+    ("LAUGHING", 31),
+    ("TERRIFIED", 32),
+    ("SHOUTING", 33),
+    ("WHISPERING", 34),
+    ("UNFRIENDLY", 35),
+    ("ENUNCIATED", 36),
+    ("SINGING", 37),
+    ("QUESTIONING", 38),
+    ("CONFUSED", 39),
+    ("SERIOUS", 40),
+    ("SMILING", 41),
+    ("EXCITED", 42),
+    ("FRIENDLY", 43),
+    ("HUMOROUS", 44),
+    ("CONTEMPT", 45),
 ];
 
-/// 将标准属性转换为tokens
-///
-/// # Arguments
-/// * `age` - 年龄属性
-/// * `gender` - 性别属性
-/// * `emotion` - 情感属性
-/// * `pitch` - 音高属性
-/// * `speed` - 语速属性
-///
-/// # Returns
-/// * `String` - 属性tokens字符串
+/// 将标准属性转换为token ID数组
+/// 
+/// # 参数
+/// * `speed` - 语速 ("very_slow", "slow", "medium", "fast", "very_fast")
+/// * `pitch` - 音高 ("low_pitch", "medium_pitch", "high_pitch", "very_high_pitch")
+/// * `age` - 年龄 ("child", "teenager", "youth-adult", "middle-aged", "elderly")
+/// * `gender` - 性别 ("female", "male")
+/// * `emotion` - 情感 (见EMOTION_MAP)
+/// 
+/// # 返回值
+/// 返回token ID数组，第一个是TTS_SPECIAL_TOKEN_OFFSET，后续是各属性对应的token ID
 pub fn convert_standard_properties_to_tokens(
+    speed: &str,
+    pitch: &str,
     age: &str,
     gender: &str,
     emotion: &str,
-    pitch: &str,
-    speed: &str,
-) -> String {
-    let age_token = get_token_from_map(AGE_MAP, age);
-    let gender_token = get_token_from_map(GENDER_MAP, gender);
-    let emotion_token = get_token_from_map(EMOTION_MAP, emotion);
-    let pitch_token = get_token_from_map(PITCH_MAP, pitch);
-    let speed_token = get_token_from_map(SPEED_MAP, speed);
+) -> Vec<i32> {
+    let speed_token = get_token_from_map(SPEED_MAP, speed).unwrap_or(3);
+    let pitch_token = get_token_from_map(PITCH_MAP, pitch).unwrap_or(7);
+    let age_token = get_token_from_map(AGE_MAP, age).unwrap_or(15);
+    let gender_token = get_token_from_map(GENDER_MAP, gender).unwrap_or(46);
+    let emotion_token = get_token_from_map(EMOTION_MAP, emotion).unwrap_or(26);
 
-    format!(
-        "SPCT_0{}{}{}{}{}",
-        age_token, gender_token, emotion_token, pitch_token, speed_token
-    )
+    vec![
+        TTS_SPECIAL_TOKEN_OFFSET,
+        TTS_SPECIAL_TOKEN_OFFSET + speed_token,
+        TTS_SPECIAL_TOKEN_OFFSET + pitch_token,
+        TTS_SPECIAL_TOKEN_OFFSET + age_token,
+        TTS_SPECIAL_TOKEN_OFFSET + gender_token,
+        TTS_SPECIAL_TOKEN_OFFSET + emotion_token,
+    ]
 }
 
 /// 根据音高值分类
@@ -98,13 +105,13 @@ pub fn convert_standard_properties_to_tokens(
 ///
 /// # Returns
 /// * `String` - 分类后的音高属性
-pub fn classify_pitch(pitch: f32, gender: &str, age: &str) -> String {
+pub fn classify_pitch(pitch: f32, gender: &str, age: u8) -> String {
     let gender = gender.to_lowercase();
-    let age = age.to_lowercase();
+    let age_class = classify_age(age);
 
     // 女性分类
     if gender == "female" {
-        match age.as_str() {
+        match age_class.as_str() {
             "child" => {
                 if pitch < 250.0 {
                     "low_pitch".to_string()
@@ -174,7 +181,7 @@ pub fn classify_pitch(pitch: f32, gender: &str, age: &str) -> String {
     }
     // 男性分类
     else if gender == "male" {
-        match age.as_str() {
+        match age_class.as_str() {
             "teenager" => {
                 if pitch < 121.0 {
                     "low_pitch".to_string()
@@ -266,45 +273,66 @@ pub fn classify_speed(speed: f32) -> String {
     }
 }
 
-/// 根据音高和语速值转换属性为tokens
-///
-/// # Arguments
-/// * `age` - 年龄属性
-/// * `gender` - 性别属性
-/// * `emotion` - 情感属性
-/// * `pitch` - 音高值
-/// * `speed` - 语速值
-///
-/// # Returns
-/// * `String` - 属性tokens字符串
+/// 根据年龄值分类年龄属性
+/// 
+/// # 参数
+/// * `age` - 年龄值 (0-100)
+/// 
+/// # 返回值
+/// 返回年龄分类字符串
+fn classify_age(age: u8) -> String {
+    if age < 13 {
+        "child".to_string()
+    } else if age < 20 {
+        "teenager".to_string()
+    } else if age < 40 {
+        "youth-adult".to_string()
+    } else if age < 65 {
+        "middle-aged".to_string()
+    } else {
+        "elderly".to_string()
+    }
+}
+
+/// 将属性转换为token ID数组
+/// 
+/// # 参数
+/// * `speed` - 语速值 (0.0-2.0)
+/// * `pitch` - 音高值 (-20.0到20.0)
+/// * `age` - 年龄值 (0-100)
+/// * `gender` - 性别 ("female", "male")
+/// * `emotion` - 情感 (见EMOTION_MAP)
+/// 
+/// # 返回值
+/// 返回token ID数组，第一个是TTS_SPECIAL_TOKEN_OFFSET，后续是各属性对应的token ID
 pub fn convert_properties_to_tokens(
-    age: &str,
+    speed: f32,
+    pitch: f32,
+    age: u8,
     gender: &str,
     emotion: &str,
-    pitch: f32,
-    speed: f32,
-) -> String {
-    let age_token = get_token_from_map(AGE_MAP, age);
-    let gender_token = get_token_from_map(GENDER_MAP, gender);
-    let emotion_token = get_token_from_map(EMOTION_MAP, emotion);
-    let pitch_token = get_token_from_map(PITCH_MAP, &classify_pitch(pitch, gender, age));
-    let speed_token = get_token_from_map(SPEED_MAP, &classify_speed(speed));
-
-    format!(
-        "SPCT_0{}{}{}{}{}",
-        age_token, gender_token, emotion_token, pitch_token, speed_token
+) -> Vec<i32> {
+    let speed_class = classify_speed(speed);
+    let pitch_class = classify_pitch(pitch, gender, age);
+    let age_class = classify_age(age);
+    
+    convert_standard_properties_to_tokens(
+        &speed_class,
+        &pitch_class,
+        &age_class,
+        gender,
+        emotion,
     )
 }
 
 /// 从映射表中获取token
-fn get_token_from_map(map: &[(&str, &str)], key: &str) -> String {
+fn get_token_from_map(map: &[(&str, i32)], key: &str) -> Option<i32> {
     for &(k, v) in map {
         if k.eq_ignore_ascii_case(key) {
-            return v.to_string();
+            return Some(v);
         }
     }
-    // 如果找不到匹配项，返回默认值
-    map[0].1.to_string()
+    None
 }
 
 #[cfg(test)]
@@ -314,19 +342,45 @@ mod tests {
     #[test]
     fn test_convert_standard_properties_to_tokens() {
         let result = convert_standard_properties_to_tokens(
+            "medium",
+            "medium_pitch",
             "youth-adult",
             "female",
             "NEUTRAL",
-            "medium_pitch",
-            "medium",
         );
-        assert_eq!(result, "SPCT_0SPCT_15SPCT_46SPCT_22SPCT_7SPCT_3");
+        let expected = vec![
+            TTS_SPECIAL_TOKEN_OFFSET,      // 77823
+            TTS_SPECIAL_TOKEN_OFFSET + 3,  // 77826 (medium speed)
+            TTS_SPECIAL_TOKEN_OFFSET + 7,  // 77830 (medium_pitch)
+            TTS_SPECIAL_TOKEN_OFFSET + 15, // 77838 (youth-adult)
+            TTS_SPECIAL_TOKEN_OFFSET + 46, // 77869 (female)
+            TTS_SPECIAL_TOKEN_OFFSET + 26, // 77849 (NEUTRAL)
+        ];
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_convert_properties_to_tokens() {
+        let result = convert_properties_to_tokens(4.2, 200.0, 25, "female", "NEUTRAL");
+        // 应该返回包含6个token ID的数组
+        assert_eq!(result.len(), 6);
+        assert_eq!(result[0], TTS_SPECIAL_TOKEN_OFFSET);
+        // 检查所有token ID都大于等于TTS_SPECIAL_TOKEN_OFFSET
+        for &token_id in &result {
+            assert!(token_id >= TTS_SPECIAL_TOKEN_OFFSET);
+        }
     }
 
     #[test]
     fn test_classify_pitch() {
-        let result = classify_pitch(200.0, "female", "youth-adult");
-        assert_eq!(result, "medium_pitch");
+        let result = classify_pitch(200.0, "female", 25);
+        assert_eq!(result, "medium_pitch"); // 女性25岁(youth-adult): 191.0 < 200.0 < 211.0
+
+        let result = classify_pitch(100.0, "male", 25);
+        assert_eq!(result, "low_pitch"); // 男性25岁(youth-adult): 100.0 < 115.0
+
+        let result = classify_pitch(200.0, "female", 25);
+        assert_eq!(result, "medium_pitch"); // 女性25岁(youth-adult): 191.0 < 200.0 < 211.0
     }
 
     #[test]
@@ -336,8 +390,11 @@ mod tests {
     }
 
     #[test]
-    fn test_convert_properties_to_tokens() {
-        let result = convert_properties_to_tokens("youth-adult", "female", "NEUTRAL", 200.0, 4.2);
-        assert_eq!(result, "SPCT_0SPCT_15SPCT_46SPCT_22SPCT_7SPCT_3");
+    fn test_classify_age() {
+        assert_eq!(classify_age(10), "child");
+        assert_eq!(classify_age(16), "teenager");
+        assert_eq!(classify_age(25), "youth-adult");
+        assert_eq!(classify_age(45), "middle-aged");
+        assert_eq!(classify_age(70), "elderly");
     }
 }

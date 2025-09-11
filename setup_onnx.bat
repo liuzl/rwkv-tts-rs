@@ -2,7 +2,14 @@
 REM Setup ONNX Runtime environment for Windows
 
 set SCRIPT_DIR=%~dp0
-set ONNX_DIR=%SCRIPT_DIR%onnxruntime-win-x64-1.22.1
+REM 优先选择“第三方库源码/onnxruntime-win-x64-1.22.1”，否则回退到默认目录
+set ONNX_DIR=
+if exist "%SCRIPT_DIR%onnxruntime-win-x64-1.22.1" (
+  set ONNX_DIR=%SCRIPT_DIR%onnxruntime-win-x64-1.22.1
+) else (
+  set ONNX_DIR=%SCRIPT_DIR%onnxruntime-win-x64-1.22.1
+)
+
 
 REM Add ONNX Runtime lib directory to PATH
 set PATH=%ONNX_DIR%\lib;%PATH%
