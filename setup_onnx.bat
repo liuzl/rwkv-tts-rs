@@ -10,10 +10,15 @@ set PATH=%ONNX_DIR%\lib;%PATH%
 REM Set ORT environment variables
 set ORT_LIB_LOCATION=%ONNX_DIR%\lib
 set ONNXRUNTIME_ROOT=%ONNX_DIR%
+set ORT_DYLIB_PATH=%ONNX_DIR%\lib\onnxruntime.dll
+setx ORT_DYLIB_PATH "%ONNX_DIR%\lib\onnxruntime.dll" >nul
 
 echo ONNX Runtime environment configured:
 echo   ONNX_DIR: %ONNX_DIR%
 echo   ORT_LIB_LOCATION: %ORT_LIB_LOCATION%
 echo   ONNXRUNTIME_ROOT: %ONNXRUNTIME_ROOT%
+echo   ORT_DYLIB_PATH: %ORT_DYLIB_PATH%
+echo User ORT_DYLIB_PATH: %ORT_DYLIB_PATH%
+echo Current Session ORT_DYLIB_PATH: %ORT_DYLIB_PATH%
 echo.
 echo You can now run: cargo build --release
