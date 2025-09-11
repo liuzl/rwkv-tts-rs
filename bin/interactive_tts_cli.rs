@@ -306,7 +306,7 @@ async fn generate_audio(
         text: params.text.clone(),
         model_path: model_path.to_string(),
         vocab_path: format!(
-            "{}/rwkv_vocab_v20230424_sparktts_spct_tokens.txt",
+            "{}/tokenizer.json",
             model_path
         ),
         output_path: params.output_dir.clone(),
