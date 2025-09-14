@@ -163,6 +163,86 @@ The build script (`build.rs`) automatically configures the ONNX Runtime paths du
 
 Install ONNX Runtime through your package manager or download prebuilt binaries from the official releases.
 
+## Troubleshooting
+
+### LINK : fatal error LNK1181: 无法打开输入文件'onnxruntime.lib'
+
+这个错误通常发生在 Windows 平台上编译时，表示链接器无法找到 ONNX Runtime 库文件。
+
+#### 问题原因分析
+
+1. **库文件缺失**: ONNX Runtime 库文件未正确下载或放置在预期位置
+2. **路径配置错误**: `build.rs` 中配置的库路径与实际文件位置不匹配
+3. **环境变量未设置**: 缺少必要的环境变量指向 ONNX Runtime 库
+
+#### 解决方案
+
+**方案 1: 设置环境变量 (推荐)**
+
+如果你已经下载了 ONNX Runtime 库，可以通过设置环境变量来指定库路径：
+
+```powershell
+# PowerShell
+$env:ORT_LIB_LOCATION = "C:\path\to\your\onnxruntime\lib"
+cargo build --release
+```
+
+```cmd
+# Command Prompt
+set ORT_LIB_LOCATION=C:\path\to\your\onnxruntime\lib
+cargo build --release
+```
+
+**方案 2: 手动下载并放置库文件**
+
+1. 从 [Microsoft ONNX Runtime releases](https://github.com/microsoft/onnxruntime/releases) 下载适合你平台的版本
+2. 解压到项目根目录下的以下路径之一：
+   - `./第三方库源码/onnxruntime-win-x64-1.22.1/` (Windows x64)
+   - `./第三方库源码/onnxruntime-win-arm64-1.22.1/` (Windows ARM64)
+   - `./onnxruntime-win-x64-1.22.1/` (Windows x64)
+   - `./onnxruntime-win-arm64-1.22.1/` (Windows ARM64)
+
+**方案 3: 使用项目提供的设置脚本**
+
+```powershell
+# PowerShell
+.\setup_onnx.ps1
+cargo build --release
+```
+
+```cmd
+# Command Prompt
+setup_onnx.bat
+cargo build --release
+```
+
+#### 不同平台的具体操作步骤
+
+**Windows x64:**
+1. 下载 `onnxruntime-win-x64-1.22.1.zip`
+2. 解压到 `./onnxruntime-win-x64-1.22.1/`
+3. 确保 `lib/onnxruntime.lib` 文件存在
+4. 运行 `cargo build --release`
+
+**Windows ARM64:**
+1. 下载 `onnxruntime-win-arm64-1.22.1.zip`
+2. 解压到 `./onnxruntime-win-arm64-1.22.1/`
+3. 确保 `lib/onnxruntime.lib` 文件存在
+4. 运行 `cargo build --release`
+
+**验证安装:**
+```powershell
+# 检查库文件是否存在
+Test-Path "./onnxruntime-win-x64-1.22.1/lib/onnxruntime.lib"
+# 应该返回 True
+```
+
+如果问题仍然存在，请检查：
+1. 下载的 ONNX Runtime 版本是否与项目要求匹配 (1.22.1)
+2. 文件路径是否正确
+3. 是否有足够的磁盘空间
+4. 防病毒软件是否阻止了文件访问
+
 ## License
 
 MIT License

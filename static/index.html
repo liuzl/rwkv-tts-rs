@@ -1,0 +1,1521 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RWKV TTS - 语音合成服务</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            padding: 40px;
+            width: 100%;
+            max-width: 1000px;
+            animation: fadeInUp 0.6s ease-out;
+        }
+
+        .tab-navigation {
+            display: flex;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #e2e8f0;
+        }
+
+        .tab-button {
+            background: none;
+            border: none;
+            padding: 15px 30px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #718096;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s ease;
+        }
+
+        .tab-button.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+
+        .tab-button:hover {
+            color: #667eea;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            color: #2d3748;
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header p {
+            color: #718096;
+            font-size: 1.1rem;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #2d3748;
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            background: #f7fafc;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: #667eea;
+            background: #fff;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        textarea.form-control {
+            resize: vertical;
+            min-height: 120px;
+            font-family: inherit;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 12px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .audio-container {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 10px;
+            margin-top: 10px;
+        }
+
+        .audio-container audio {
+            width: 100%;
+            height: 50px;
+            margin-bottom: 8px;
+        }
+
+        .audio-download {
+            display: inline-block;
+            color: #667eea;
+            text-decoration: none;
+            font-size: 12px;
+            padding: 4px 8px;
+            border: 1px solid #667eea;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+        }
+
+        .audio-download:hover {
+            background: #667eea;
+            color: white;
+        }
+
+        .result-item {
+            background: #fff;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .result-info {
+            font-weight: bold;
+            color: #2d3748;
+        }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .summary-item {
+            background: #f7fafc;
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+            border: 1px solid #e2e8f0;
+        }
+
+        .summary-label {
+            font-size: 0.9rem;
+            color: #718096;
+            margin-bottom: 5px;
+        }
+
+        .summary-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #2d3748;
+        }
+
+        .result {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f7fafc;
+            border-radius: 12px;
+            border-left: 4px solid #667eea;
+            display: none;
+        }
+
+        .result.success {
+            background: #f0fff4;
+            border-left-color: #38a169;
+        }
+
+        .result.error {
+            background: #fed7d7;
+            border-left-color: #e53e3e;
+        }
+
+        .audio-player {
+            margin-top: 15px;
+        }
+
+        .audio-player audio {
+            width: 100%;
+            height: 50px;
+            border-radius: 8px;
+            min-height: 50px;
+        }
+
+        .status-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+            padding: 20px;
+            background: #edf2f7;
+            border-radius: 12px;
+        }
+
+        .status-item {
+            text-align: center;
+        }
+
+        .status-item .label {
+            font-size: 0.85rem;
+            color: #718096;
+            margin-bottom: 5px;
+        }
+
+        .status-item .value {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #2d3748;
+        }
+
+        .advanced-options {
+            margin-top: 20px;
+            padding: 20px;
+            background: #f7fafc;
+            border-radius: 12px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .advanced-toggle {
+            background: none;
+            border: none;
+            color: #667eea;
+            font-weight: 600;
+            cursor: pointer;
+            margin-bottom: 15px;
+            font-size: 1rem;
+        }
+
+        .advanced-content {
+            display: none;
+        }
+
+        .advanced-content.show {
+            display: block;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            accent-color: #667eea;
+        }
+
+        /* 并发测试样式 */
+        .concurrent-test-container {
+            max-width: 100%;
+        }
+
+        .test-controls {
+            display: flex;
+            gap: 15px;
+            margin: 25px 0;
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #718096, #4a5568);
+        }
+
+        .btn-secondary:hover {
+            background: linear-gradient(135deg, #4a5568, #2d3748);
+        }
+
+        .concurrent-status {
+            margin: 30px 0;
+            padding: 25px;
+            background: #f7fafc;
+            border-radius: 12px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+
+        .status-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            border-left: 4px solid #667eea;
+        }
+
+        .status-card.success {
+            border-left-color: #38a169;
+        }
+
+        .status-card.error {
+            border-left-color: #e53e3e;
+        }
+
+        .status-label {
+            font-size: 0.9rem;
+            color: #718096;
+            margin-bottom: 8px;
+        }
+
+        .status-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #2d3748;
+        }
+
+        .progress-container {
+            position: relative;
+            margin-bottom: 20px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #e2e8f0;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-weight: 600;
+            color: #2d3748;
+            font-size: 0.9rem;
+        }
+
+        .test-results {
+            margin-top: 30px;
+            padding: 25px;
+            background: #f7fafc;
+            border-radius: 12px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .test-results h3 {
+            color: #2d3748;
+            margin-bottom: 20px;
+            font-size: 1.5rem;
+        }
+
+        .results-summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+
+        .summary-item {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .summary-label {
+            font-size: 0.9rem;
+            color: #718096;
+            margin-bottom: 5px;
+        }
+
+        .summary-value {
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: #2d3748;
+        }
+
+        .results-details {
+            max-height: 300px;
+            overflow-y: auto;
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+        }
+
+        .result-item {
+            padding: 10px;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .result-item:last-child {
+            border-bottom: none;
+        }
+
+        .result-status {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .result-status.success {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+
+        .result-status.error {
+            background: #fed7d7;
+            color: #742a2a;
+        }
+
+        /* 响应式设计 */
+        @media (max-width: 768px) {
+            .container {
+                margin: 10px;
+                padding: 15px;
+            }
+
+            .tab-navigation {
+                flex-direction: column;
+                gap: 10px;
+            }
+
+            .tab-button {
+                width: 100%;
+                text-align: center;
+            }
+
+            .form-group {
+                margin-bottom: 15px;
+            }
+
+            .test-controls {
+                flex-direction: column;
+                gap: 10px;
+            }
+
+            .test-controls button {
+                width: 100%;
+            }
+
+            .status-grid {
+                grid-template-columns: 1fr;
+                gap: 10px;
+            }
+
+            .results-summary {
+                grid-template-columns: 1fr;
+                gap: 10px;
+            }
+
+            .status-value {
+                font-size: 1.5rem;
+            }
+
+            .summary-value {
+                font-size: 1.1rem;
+            }
+
+            .result-item {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 5px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .container {
+                margin: 5px;
+                padding: 10px;
+            }
+
+            h1 {
+                font-size: 1.8rem;
+            }
+
+            .form-group label {
+                font-size: 0.9rem;
+            }
+
+            .form-group input,
+            .form-group select,
+            .form-group textarea {
+                font-size: 14px;
+            }
+
+            .status-card {
+                padding: 15px;
+            }
+
+            .test-results h3 {
+                font-size: 1.2rem;
+            }
+
+            .progress-text {
+                font-size: 0.8rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎤 RWKV TTS</h1>
+            <p>高质量神经网络语音合成服务</p>
+        </div>
+
+        <div class="tab-navigation">
+            <button class="tab-button active" onclick="switchTab('singleTab')">🎵 单次测试</button>
+            <button class="tab-button" onclick="switchTab('concurrentTab')">⚡ 并发测试</button>
+        </div>
+
+        <div id="singleTab" class="tab-content active">
+            <form id="ttsForm">
+            <div class="form-group">
+                <label for="text">输入文本 *</label>
+                <textarea 
+                    id="text" 
+                    name="text" 
+                    class="form-control" 
+                    placeholder="请输入要转换为语音的文本内容..."
+                    required
+                ></textarea>
+            </div>
+
+            <div class="advanced-options">
+                <button type="button" class="advanced-toggle">
+                    ⚙️ 高级选项
+                </button>
+                <div class="advanced-content" id="advancedContent">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="speaker">说话人</label>
+                            <input 
+                                type="text" 
+                                id="speaker" 
+                                name="speaker" 
+                                class="form-control" 
+                                placeholder="可选，指定说话人"
+                            >
+                        </div>
+                        <div class="form-group">
+                            <label for="temperature">温度 (0.1-2.0)</label>
+                            <input 
+                                type="number" 
+                                id="temperature" 
+                                name="temperature" 
+                                class="form-control" 
+                                min="0.1" 
+                                max="2.0" 
+                                step="0.1" 
+                                value="1.0"
+                            >
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="topP">Top-P (0.1-1.0)</label>
+                            <input 
+                                type="number" 
+                                id="topP" 
+                                name="topP" 
+                                class="form-control" 
+                                min="0.1" 
+                                max="1.0" 
+                                step="0.1" 
+                                value="0.3"
+                            >
+                        </div>
+                        <div class="form-group">
+                            <label for="speed">语速</label>
+                            <input 
+                                type="number" 
+                                id="speed" 
+                                name="speed" 
+                                class="form-control" 
+                                min="0.5" 
+                                max="2.0" 
+                                step="0.1" 
+                                value="1.0"
+                            >
+                        </div>
+                        <div class="form-group">
+                            <label for="seed">随机种子 (seed)</label>
+                            <input 
+                                type="number" 
+                                id="seed" 
+                                name="seed" 
+                                class="form-control" 
+                                placeholder="可选，相同 seed 可复现结果"
+                            >
+                        </div>
+                    </div>
+                    <!-- 添加基于Python项目的高级选项 -->
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="age">年龄</label>
+                            <select id="age" name="age" class="form-control">
+                                <option value="child">儿童</option>
+                                <option value="teenager">青少年</option>
+                                <option value="youth-adult" selected>青年/成年</option>
+                                <option value="middle-aged">中年</option>
+                                <option value="elderly">老年</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="gender">性别</label>
+                            <select id="gender" name="gender" class="form-control">
+                                <option value="female">女性</option>
+                                <option value="male" selected>男性</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="emotion">情感</label>
+                            <select id="emotion" name="emotion" class="form-control">
+                                <option value="NEUTRAL" selected>中性</option>
+                                <option value="ANGRY">愤怒</option>
+                                <option value="HAPPY">快乐</option>
+                                <option value="SAD">悲伤</option>
+                                <option value="FEARFUL">恐惧</option>
+                                <option value="DISGUSTED">厌恶</option>
+                                <option value="SURPRISED">惊讶</option>
+                                <option value="SARCASTIC">讽刺</option>
+                                <option value="EXCITED">兴奋</option>
+                                <option value="SLEEPY">困倦</option>
+                                <option value="CONFUSED">困惑</option>
+                                <option value="EMPHASIS">强调</option>
+                                <option value="LAUGHING">笑</option>
+                                <option value="SINGING">唱歌</option>
+                                <option value="WORRIED">担心</option>
+                                <option value="WHISPER">耳语</option>
+                                <option value="ANXIOUS">焦虑</option>
+                                <option value="NO-AGREEMENT">不同意</option>
+                                <option value="APOLOGETIC">道歉</option>
+                                <option value="CONCERNED">关心</option>
+                                <option value="ENUNCIATED">清晰</option>
+                                <option value="ASSERTIVE">自信</option>
+                                <option value="ENCOURAGING">鼓励</option>
+                                <option value="CONTEMPT">蔑视</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="pitch">音调</label>
+                            <select id="pitch" name="pitch" class="form-control">
+                                <option value="low_pitch">低音调</option>
+                                <option value="medium_pitch" selected>中音调</option>
+                                <option value="high_pitch">高音调</option>
+                                <option value="very_high_pitch">极高音调</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="zeroShot" name="zeroShot">
+                            <label for="zeroShot">启用Zero-shot模式</label>
+                        </div>
+                    </div>
+                    <!-- Zero-shot模式下的选项，只有在启用Zero-shot时才显示 -->
+                    <div class="form-row" id="zeroShotOptions" style="display: none;">
+                        <div class="form-group">
+                            <label for="refAudioFile">参考音频文件</label>
+                            <input 
+                                type="file" 
+                                id="refAudioFile" 
+                                name="refAudioFile" 
+                                class="form-control"
+                                accept=".wav,.mp3,.flac,.m4a"
+                            >
+                            <small>支持 WAV, MP3, FLAC, M4A 格式</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="promptText">提示词</label>
+                            <textarea 
+                                id="promptText" 
+                                name="promptText" 
+                                class="form-control" 
+                                placeholder="请输入提示词，描述参考音频的说话风格、情感等..."
+                                rows="3"
+                            ></textarea>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <button type="submit" class="btn" id="generateBtn">
+                🎵 生成语音
+            </button>
+        </form>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>正在生成语音，请稍候...</p>
+        </div>
+
+        <div class="result" id="result">
+            <div id="resultMessage"></div>
+            <div class="audio-player" id="audioPlayer"></div>
+            <div class="status-info" id="statusInfo"></div>
+        </div>
+        </div>
+
+        <div id="concurrentTab" class="tab-content">
+            <div class="concurrent-test-container">
+                <div class="form-group">
+                    <label for="concurrentText">测试文本 *</label>
+                    <textarea 
+                        id="concurrentText" 
+                        class="form-control" 
+                        placeholder="请输入要进行并发测试的文本内容..."
+                        required
+                    >你好，这是一个并发测试的示例文本。</textarea>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="concurrentCount">并发数量 (1-50)</label>
+                        <input 
+                            type="number" 
+                            id="concurrentCount" 
+                            class="form-control" 
+                            min="1" 
+                            max="50" 
+                            value="10"
+                            required
+                        >
+                    </div>
+                    <div class="form-group">
+                        <label for="testTimeout">超时时间 (秒)</label>
+                        <input 
+                            type="number" 
+                            id="testTimeout" 
+                            class="form-control" 
+                            min="5" 
+                            max="300" 
+                            value="30"
+                        >
+                    </div>
+                </div>
+
+                <div class="test-controls">
+                    <button type="button" class="btn" id="startConcurrentTest">
+                        ▶️ 开始并发测试
+                    </button>
+                    <button type="button" class="btn btn-secondary" id="stopConcurrentTest" disabled>
+                        ⏹️ 停止测试
+                    </button>
+                </div>
+
+                <div class="concurrent-status" id="concurrentStatus" style="display: none;">
+                    <div class="status-grid">
+                        <div class="status-card">
+                            <div class="status-label">进行中</div>
+                            <div class="status-value" id="runningCount">0</div>
+                        </div>
+                        <div class="status-card success">
+                            <div class="status-label">成功</div>
+                            <div class="status-value" id="successCount">0</div>
+                        </div>
+                        <div class="status-card error">
+                            <div class="status-label">失败</div>
+                            <div class="status-value" id="failureCount">0</div>
+                        </div>
+                        <div class="status-card">
+                            <div class="status-label">总计</div>
+                            <div class="status-value" id="totalCount">0</div>
+                        </div>
+                    </div>
+
+                    <div class="progress-container">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progressFill"></div>
+                        </div>
+                        <div class="progress-text" id="progressText">0%</div>
+                    </div>
+                </div>
+
+                <div class="test-results" id="testResults" style="display: none;">
+                    <h3>测试结果</h3>
+                    <div class="results-summary" id="resultsSummary"></div>
+                    <div class="results-details" id="resultsDetails"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let serverStatus = null;
+        let concurrentTestRunning = false;
+        let concurrentTestResults = [];
+        let testStartTime = null;
+
+        // 页面加载时获取服务器状态
+        window.addEventListener('load', async () => {
+            await fetchServerStatus();
+        });
+
+        // 标签页切换函数
+        function switchTab(tabName) {
+            // 隐藏所有标签内容
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // 移除所有按钮的active状态
+            document.querySelectorAll('.tab-button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            // 显示选中的标签内容
+            if (tabName === 'single') {
+                document.getElementById('singleTab').classList.add('active');
+                document.querySelector('[onclick="switchTab(\'single\')"]').classList.add('active');
+            } else if (tabName === 'concurrent') {
+                document.getElementById('concurrentTab').classList.add('active');
+                document.querySelector('[onclick="switchTab(\'concurrent\')"]').classList.add('active');
+            }
+        }
+
+        // 并发测试相关函数
+        async function startConcurrentTest() {
+            if (concurrentTestRunning) return;
+            
+            const concurrency = parseInt(document.getElementById('concurrentCount').value);
+            const timeout = parseInt(document.getElementById('testTimeout').value) * 1000;
+            const testText = document.getElementById('concurrentText').value.trim();
+            
+            if (!testText) {
+                alert('请输入测试文本');
+                return;
+            }
+            
+            concurrentTestRunning = true;
+            concurrentTestResults = [];
+            testStartTime = Date.now();
+            
+            // 更新UI状态
+            document.getElementById('startConcurrentTest').disabled = true;
+            document.getElementById('stopConcurrentTest').disabled = false;
+            
+            // 显示并重置状态显示
+            document.getElementById('concurrentStatus').style.display = 'block';
+            updateConcurrentStatus(0, 0, concurrency);
+            updateProgress(0, concurrency);
+            
+            // 创建并发请求
+            const promises = [];
+            for (let i = 0; i < concurrency; i++) {
+                promises.push(performSingleRequest(i, testText, timeout));
+            }
+            
+            try {
+                await Promise.allSettled(promises);
+            } catch (error) {
+                console.error('并发测试错误:', error);
+            }
+            
+            // 测试完成
+            concurrentTestRunning = false;
+            document.getElementById('startConcurrentTest').disabled = false;
+            document.getElementById('stopConcurrentTest').disabled = true;
+            
+            // 显示最终结果
+            displayTestResults();
+        }
+        
+        function stopConcurrentTest() {
+            concurrentTestRunning = false;
+            document.getElementById('startConcurrentTest').disabled = false;
+            document.getElementById('stopConcurrentTest').disabled = true;
+        }
+        
+        async function performSingleRequest(requestId, text, timeout) {
+            if (!concurrentTestRunning) return;
+            
+            const startTime = Date.now();
+            const result = {
+                id: requestId,
+                startTime: startTime,
+                endTime: null,
+                duration: null,
+                success: false,
+                error: null,
+                audioData: null
+            };
+            
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), timeout);
+                
+                // 读取seed与top_p
+                const seedVal = (() => {
+                    const v = document.getElementById('seed')?.value?.trim?.() ?? '';
+                    return v === '' ? null : Number(v);
+                })();
+                const topPVal = Number(document.getElementById('topP')?.value ?? 0.3);
+                
+                const response = await fetch('/api/tts', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        text: text,
+                        speaker: document.getElementById('speaker').value,
+                        temperature: parseFloat(document.getElementById('temperature').value),
+                        top_p: topPVal,
+                        speed: parseFloat(document.getElementById('speed').value),
+                        seed: seedVal
+                    }),
+                    signal: controller.signal
+                });
+                
+                clearTimeout(timeoutId);
+                
+                if (response.ok) {
+                    const responseData = await response.json();
+                    if (responseData.success && responseData.audio_base64) {
+                        result.success = true;
+                        result.audioData = responseData.audio_base64;
+                    } else {
+                        result.error = responseData.error || responseData.message || '生成失败';
+                    }
+                } else {
+                    result.error = `HTTP ${response.status}: ${response.statusText}`;
+                }
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    result.error = '请求超时';
+                } else {
+                    result.error = error.message;
+                }
+            }
+            
+            result.endTime = Date.now();
+            result.duration = result.endTime - result.startTime;
+            
+            concurrentTestResults.push(result);
+            
+            // 更新实时状态
+            const completed = concurrentTestResults.length;
+            const successful = concurrentTestResults.filter(r => r.success).length;
+            const failed = concurrentTestResults.filter(r => !r.success).length;
+            const remaining = parseInt(document.getElementById('concurrentCount').value) - completed;
+            
+            updateConcurrentStatus(successful, failed, remaining);
+            updateProgress(completed, parseInt(document.getElementById('concurrentCount').value));
+        }
+        
+        function updateConcurrentStatus(successful, failed, remaining) {
+            document.getElementById('successCount').textContent = successful;
+            document.getElementById('failureCount').textContent = failed;
+            document.getElementById('runningCount').textContent = remaining;
+        }
+        
+        function updateProgress(completed, total) {
+            const percentage = (completed / total) * 100;
+            document.getElementById('progressFill').style.width = percentage + '%';
+            document.getElementById('progressText').textContent = `${completed}/${total} (${percentage.toFixed(1)}%)`;
+        }
+        
+        function displayTestResults() {
+            const totalRequests = concurrentTestResults.length;
+            const successfulRequests = concurrentTestResults.filter(r => r.success).length;
+            const failedRequests = totalRequests - successfulRequests;
+            const successRate = totalRequests > 0 ? (successfulRequests / totalRequests * 100).toFixed(1) : 0;
+            
+            const durations = concurrentTestResults.filter(r => r.duration !== null).map(r => r.duration);
+            const avgResponseTime = durations.length > 0 ? (durations.reduce((a, b) => a + b, 0) / durations.length).toFixed(0) : 0;
+            
+            const totalTestTime = testStartTime ? ((Date.now() - testStartTime) / 1000).toFixed(1) : 0;
+            
+            // 更新汇总信息到resultsSummary
+            const summaryContainer = document.getElementById('resultsSummary');
+            summaryContainer.innerHTML = `
+                <div class="summary-grid">
+                    <div class="summary-item">
+                        <div class="summary-label">总请求数</div>
+                        <div class="summary-value">${totalRequests}</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-label">成功率</div>
+                        <div class="summary-value">${successRate}%</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-label">平均响应时间</div>
+                        <div class="summary-value">${avgResponseTime}ms</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-label">总测试时间</div>
+                        <div class="summary-value">${totalTestTime}s</div>
+                    </div>
+                </div>
+            `;
+            
+            // 更新详细结果
+            const detailsContainer = document.getElementById('resultsDetails');
+            detailsContainer.innerHTML = '';
+            
+            concurrentTestResults.forEach(result => {
+                const item = document.createElement('div');
+                item.className = 'result-item';
+                
+                const header = document.createElement('div');
+                header.className = 'result-header';
+                
+                const info = document.createElement('span');
+                info.className = 'result-info';
+                info.textContent = `请求 #${result.id + 1} - ${result.duration}ms`;
+                
+                const status = document.createElement('span');
+                status.className = `result-status ${result.success ? 'success' : 'error'}`;
+                status.textContent = result.success ? '成功' : result.error || '失败';
+                
+                header.appendChild(info);
+                header.appendChild(status);
+                item.appendChild(header);
+                
+                // 如果请求成功且有音频数据，添加音频播放器
+                if (result.success && result.audioData) {
+                    const audioContainer = document.createElement('div');
+                    audioContainer.className = 'audio-container';
+                    
+                    const audioBlob = base64ToBlob(result.audioData, 'audio/wav');
+                    const audioUrl = URL.createObjectURL(audioBlob);
+                    
+                    const audioPlayer = document.createElement('audio');
+                    audioPlayer.controls = true;
+                    
+                    const audioSource = document.createElement('source');
+                    audioSource.src = audioUrl;
+                    audioSource.type = 'audio/wav';
+                    
+                    audioPlayer.appendChild(audioSource);
+                    audioContainer.appendChild(audioPlayer);
+                    
+                    // 添加下载链接
+                    const downloadLink = document.createElement('a');
+                    downloadLink.className = 'audio-download';
+                    downloadLink.href = audioUrl;
+                    downloadLink.download = `concurrent_test_${result.id + 1}.wav`;
+                    downloadLink.textContent = '📥 下载音频';
+                    
+                    audioContainer.appendChild(downloadLink);
+                    item.appendChild(audioContainer);
+                }
+                
+                detailsContainer.appendChild(item);
+            });
+            
+            // 显示结果区域
+            document.getElementById('testResults').style.display = 'block';
+        }
+
+        // 获取服务器状态
+        async function fetchServerStatus() {
+            try {
+                const response = await fetch('/api/status');
+                if (response.ok) {
+                    serverStatus = await response.json();
+                    updateStatusDisplay();
+                }
+            } catch (error) {
+                console.warn('无法获取服务器状态:', error);
+            }
+        }
+
+        // 更新状态显示
+        function updateStatusDisplay() {
+            if (!serverStatus) return;
+            
+            const statusInfo = document.getElementById('statusInfo');
+            statusInfo.innerHTML = `
+                <div class="status-item">
+                    <div class="label">服务状态</div>
+                    <div class="value">${serverStatus.status}</div>
+                </div>
+                <div class="status-item">
+                    <div class="label">版本</div>
+                    <div class="value">${serverStatus.version}</div>
+                </div>
+                <div class="status-item">
+                    <div class="label">运行时间</div>
+                    <div class="value">${formatUptime(serverStatus.uptime_seconds)}</div>
+                </div>
+                <div class="status-item">
+                    <div class="label">总请求数</div>
+                    <div class="value">${serverStatus.total_requests}</div>
+                </div>
+            `;
+        }
+
+        // 格式化运行时间
+        function formatUptime(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            return `${hours}h ${minutes}m ${secs}s`;
+        }
+
+        // 切换高级选项
+        function toggleAdvanced() {
+            const content = document.getElementById('advancedContent');
+            const toggle = document.querySelector('.advanced-toggle');
+            
+            if (content.classList.contains('show')) {
+                content.classList.remove('show');
+                toggle.textContent = '⚙️ 高级选项';
+            } else {
+                content.classList.add('show');
+                toggle.textContent = '⚙️ 隐藏高级选项';
+            }
+        }
+
+        // 切换Zero-shot选项显示
+        function toggleZeroShotOptions() {
+            const zeroShotCheckbox = document.getElementById('zeroShot');
+            const zeroShotOptions = document.getElementById('zeroShotOptions');
+            
+            if (zeroShotCheckbox.checked) {
+                zeroShotOptions.style.display = 'grid';
+            } else {
+                zeroShotOptions.style.display = 'none';
+            }
+        }
+
+        // 表单提交处理
+        document.getElementById('ttsForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const formData = new FormData(e.target);
+            const text = formData.get('text').trim();
+            
+            if (!text) {
+                showResult('请输入要转换的文本', 'error');
+                return;
+            }
+
+            // 读取 seed
+            const seedRaw = (formData.get('seed') || '').toString().trim();
+            const seed = seedRaw === '' ? null : Number(seedRaw);
+
+            // 检查是否启用Zero-shot模式
+            const isZeroShot = document.getElementById('zeroShot').checked;
+            
+            // 如果启用了Zero-shot模式且选择了文件，则使用文件上传
+            if (isZeroShot && document.getElementById('refAudioFile').files.length > 0) {
+                // 使用multipart/form-data格式上传文件
+                const multipartFormData = new FormData();
+                multipartFormData.append('text', text);
+                multipartFormData.append('speaker', formData.get('speaker') || '');
+                multipartFormData.append('temperature', parseFloat(formData.get('temperature')) || 1.0);
+                multipartFormData.append('top_p', parseFloat(formData.get('topP')) || 0.3);
+                multipartFormData.append('speed', parseFloat(formData.get('speed')) || 1.0);
+                multipartFormData.append('zero_shot', isZeroShot);
+                multipartFormData.append('seed', seed || '');
+                multipartFormData.append('age', formData.get('age') || 'youth-adult');
+                multipartFormData.append('gender', formData.get('gender') || 'male');
+                multipartFormData.append('emotion', formData.get('emotion') || 'NEUTRAL');
+                multipartFormData.append('pitch', formData.get('pitch') || 'medium_pitch');
+                multipartFormData.append('prompt_text', formData.get('promptText') || '');
+                multipartFormData.append('refAudioFile', document.getElementById('refAudioFile').files[0]);
+                
+                // 显示加载状态
+                showLoading(true);
+                hideResult();
+                
+                try {
+                    const response = await fetch('/api/tts', {
+                        method: 'POST',
+                        body: multipartFormData
+                    });
+
+                    const result = await response.json();
+
+                    if (result.success && result.audio_base64) {
+                        // 创建音频播放器
+                        const audioBlob = base64ToBlob(result.audio_base64, 'audio/wav');
+                        const audioUrl = URL.createObjectURL(audioBlob);
+                        
+                        const audioHtml = `
+                            <audio controls>
+                                <source src="${audioUrl}" type="audio/wav">
+                                您的浏览器不支持音频播放。
+                            </audio>
+                            <div style="margin-top: 10px;">
+                                <a href="${audioUrl}" download="tts_output.wav" style="color: #667eea; text-decoration: none;">
+                                    📥 下载音频文件
+                                </a>
+                            </div>
+                        `;
+                        
+                        showResult(
+                            `✅ 语音生成成功！耗时: ${result.duration_ms}ms, RTF: ${result.rtf?.toFixed(3) || 'N/A'}`,
+                            'success',
+                            audioHtml
+                        );
+                    } else {
+                        showResult(`❌ ${result.error || result.message || '生成失败'}`, 'error');
+                    }
+                } catch (error) {
+                    showResult(`❌ 网络错误: ${error.message}`, 'error');
+                } finally {
+                    showLoading(false);
+                    await fetchServerStatus(); // 更新状态
+                }
+            } else {
+                // 使用普通的JSON请求
+                const requestData = {
+                    text: text,
+                    speaker: formData.get('speaker') || null,
+                    temperature: parseFloat(formData.get('temperature')) || 1.0,
+                    top_p: parseFloat(formData.get('topP')) || 0.3,
+                    speed: parseFloat(formData.get('speed')) || 1.0,
+                    zero_shot: isZeroShot,
+                    ref_audio_path: formData.get('refAudio') || null,
+                    seed: seed,
+                    // 添加新的高级选项
+                    age: formData.get('age') || 'youth-adult',
+                    gender: formData.get('gender') || 'male',
+                    emotion: formData.get('emotion') || 'NEUTRAL',
+                    pitch: formData.get('pitch') || 'medium_pitch'
+                };
+
+                // 如果启用了Zero-shot模式，添加提示词
+                if (isZeroShot) {
+                    requestData.prompt_text = formData.get('promptText') || '';
+                }
+
+                // 显示加载状态
+                showLoading(true);
+                hideResult();
+
+                try {
+                    const response = await fetch('/api/tts', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(requestData)
+                    });
+
+                    const result = await response.json();
+
+                    if (result.success && result.audio_base64) {
+                        // 创建音频播放器
+                        const audioBlob = base64ToBlob(result.audio_base64, 'audio/wav');
+                        const audioUrl = URL.createObjectURL(audioBlob);
+                        
+                        const audioHtml = `
+                            <audio controls>
+                                <source src="${audioUrl}" type="audio/wav">
+                                您的浏览器不支持音频播放。
+                            </audio>
+                            <div style="margin-top: 10px;">
+                                <a href="${audioUrl}" download="tts_output.wav" style="color: #667eea; text-decoration: none;">
+                                    📥 下载音频文件
+                                </a>
+                            </div>
+                        `;
+                        
+                        showResult(
+                            `✅ 语音生成成功！耗时: ${result.duration_ms}ms, RTF: ${result.rtf?.toFixed(3) || 'N/A'}`,
+                            'success',
+                            audioHtml
+                        );
+                    } else {
+                        showResult(`❌ ${result.error || result.message || '生成失败'}`, 'error');
+                    }
+                } catch (error) {
+                    showResult(`❌ 网络错误: ${error.message}`, 'error');
+                } finally {
+                    showLoading(false);
+                    await fetchServerStatus(); // 更新状态
+                }
+            }
+        });
+
+        // 显示/隐藏加载状态
+        function showLoading(show) {
+            const loading = document.getElementById('loading');
+            const btn = document.getElementById('generateBtn');
+            
+            if (show) {
+                loading.style.display = 'block';
+                btn.disabled = true;
+                btn.textContent = '🔄 生成中...';
+            } else {
+                loading.style.display = 'none';
+                btn.disabled = false;
+                btn.textContent = '🎵 生成语音';
+            }
+        }
+
+        // 显示结果
+        function showResult(message, type = 'success', audioHtml = '') {
+            const result = document.getElementById('result');
+            const resultMessage = document.getElementById('resultMessage');
+            const audioPlayer = document.getElementById('audioPlayer');
+            
+            result.className = `result ${type}`;
+            result.style.display = 'block';
+            resultMessage.textContent = message;
+            audioPlayer.innerHTML = audioHtml;
+        }
+
+        // 隐藏结果
+        function hideResult() {
+            const result = document.getElementById('result');
+            result.style.display = 'none';
+        }
+
+        // Base64转Blob
+        function base64ToBlob(base64, mimeType) {
+            const byteCharacters = atob(base64);
+            const byteNumbers = new Array(byteCharacters.length);
+            
+            for (let i = 0; i < byteCharacters.length; i++) {
+                byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            
+            const byteArray = new Uint8Array(byteNumbers);
+            return new Blob([byteArray], { type: mimeType });
+        }
+
+        // 标签切换函数
+        function switchTab(tabName) {
+            // 隐藏所有标签内容
+            const contents = document.querySelectorAll('.tab-content');
+            contents.forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            // 移除所有标签的active状态
+            const tabs = document.querySelectorAll('.tab-button');
+            tabs.forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // 显示选中的标签内容
+            const targetContent = document.getElementById(tabName);
+            if (targetContent) {
+                targetContent.classList.add('active');
+            }
+            
+            // 激活选中的标签
+            const targetTab = document.querySelector(`[onclick="switchTab('${tabName}')"]`);
+            if (targetTab) {
+                targetTab.classList.add('active');
+            }
+        }
+
+        // 页面初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            // 初始化第一个标签为活跃状态
+            switchTab('singleTab');
+            
+            // 绑定并发测试按钮事件
+            const startTestBtn = document.getElementById('startConcurrentTest');
+            const stopTestBtn = document.getElementById('stopConcurrentTest');
+            
+            if (startTestBtn) {
+                startTestBtn.addEventListener('click', startConcurrentTest);
+            }
+            
+            if (stopTestBtn) {
+                stopTestBtn.addEventListener('click', stopConcurrentTest);
+            }
+            
+            // 绑定Zero-shot复选框事件
+            const zeroShotCheckbox = document.getElementById('zeroShot');
+            if (zeroShotCheckbox) {
+                zeroShotCheckbox.addEventListener('change', toggleZeroShotOptions);
+            }
+            
+            // 绑定高级选项切换事件
+            const advancedToggle = document.querySelector('.advanced-toggle');
+            if (advancedToggle) {
+                advancedToggle.addEventListener('click', toggleAdvanced);
+            }
+            
+            // 获取初始服务器状态
+            fetchServerStatus();
+            
+            // 定期更新服务器状态
+            setInterval(fetchServerStatus, 5000);
+        });
+    </script>
+</body>
+</html>

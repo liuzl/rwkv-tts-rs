@@ -1,8 +1,14 @@
 
-pip install -U huggingface_hub
+#!/bin/bash
 
-huggingface-cli download cgisky/rwkv-tts --repo-type model --local-dir assets/model/ --resume-download --local-dir-use-symlinks False &
+# 安装huggingface_hub
+pip install huggingface_hub
 
-cargo build --release &
+# 下载模型（后台运行）
+python download_models.py &
 
+# 编译项目
+cargo build --release --bin rwkvtts_server
+
+# 等待所有后台进程完成
 wait

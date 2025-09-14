@@ -63,14 +63,14 @@ const EMOTION_MAP: &[(&str, i32)] = &[
 ];
 
 /// 将标准属性转换为token ID数组
-/// 
+///
 /// # 参数
 /// * `speed` - 语速 ("very_slow", "slow", "medium", "fast", "very_fast")
 /// * `pitch` - 音高 ("low_pitch", "medium_pitch", "high_pitch", "very_high_pitch")
 /// * `age` - 年龄 ("child", "teenager", "youth-adult", "middle-aged", "elderly")
 /// * `gender` - 性别 ("female", "male")
 /// * `emotion` - 情感 (见EMOTION_MAP)
-/// 
+///
 /// # 返回值
 /// 返回token ID数组，第一个是TTS_SPECIAL_TOKEN_OFFSET，后续是各属性对应的token ID
 pub fn convert_standard_properties_to_tokens(
@@ -274,10 +274,10 @@ pub fn classify_speed(speed: f32) -> String {
 }
 
 /// 根据年龄值分类年龄属性
-/// 
+///
 /// # 参数
 /// * `age` - 年龄值 (0-100)
-/// 
+///
 /// # 返回值
 /// 返回年龄分类字符串
 fn classify_age(age: u8) -> String {
@@ -295,14 +295,14 @@ fn classify_age(age: u8) -> String {
 }
 
 /// 将属性转换为token ID数组
-/// 
+///
 /// # 参数
 /// * `speed` - 语速值 (0.0-2.0)
 /// * `pitch` - 音高值 (-20.0到20.0)
 /// * `age` - 年龄值 (0-100)
 /// * `gender` - 性别 ("female", "male")
 /// * `emotion` - 情感 (见EMOTION_MAP)
-/// 
+///
 /// # 返回值
 /// 返回token ID数组，第一个是TTS_SPECIAL_TOKEN_OFFSET，后续是各属性对应的token ID
 pub fn convert_properties_to_tokens(
@@ -315,14 +315,8 @@ pub fn convert_properties_to_tokens(
     let speed_class = classify_speed(speed);
     let pitch_class = classify_pitch(pitch, gender, age);
     let age_class = classify_age(age);
-    
-    convert_standard_properties_to_tokens(
-        &speed_class,
-        &pitch_class,
-        &age_class,
-        gender,
-        emotion,
-    )
+
+    convert_standard_properties_to_tokens(&speed_class, &pitch_class, &age_class, gender, emotion)
 }
 
 /// 从映射表中获取token

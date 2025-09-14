@@ -3,22 +3,37 @@
 //! This library provides the core functionality for text-to-speech generation using RWKV models.
 
 // Core modules
+// pub mod batch_manager; // 已移动到备份目录
 pub mod properties_util;
 pub mod ref_audio_utilities;
 pub mod rwkv_sampler;
-pub mod tts_pipeline;
+pub mod tts_state_manager;
+// pub mod tts_pipeline; // 已移动到备份目录
+
+// New concurrent architecture modules
+pub mod global_sampler_manager;
+pub mod onnx_session_pool;
+// pub mod batch_request_scheduler; // 已移动到备份目录
+pub mod dynamic_batch_manager;
+pub mod lightweight_tts_pipeline;
+// 新的状态管理架构
+pub use tts_state_manager::{
+    TtsInferContext, TtsInferOptions, TtsStateId, TtsStateManager, TtsStateStats,
+};
 
 // Re-export key components
+// pub use batch_manager::{BatchManager, BatchConfig, BatchStats}; // 已移动到备份目录
 pub use properties_util::*;
 pub use ref_audio_utilities::RefAudioUtilities;
-pub use rwkv_sampler::{RwkvSampler, SamplerArgs};
-pub use tts_pipeline::{TtsPipeline, TtsPipelineArgs};
+pub use rwkv_sampler::{RwkvSampler, SamplerArgs, TtsBatchRequest};
+// pub use tts_pipeline::{TtsPipeline, TtsPipelineArgs}; // 已移动到备份目录
 
 /// TTS Generator module
 pub mod tts_generator {
     // TTS Generator implementation
 
-    use crate::{RefAudioUtilities, RwkvSampler, TtsPipeline, TtsPipelineArgs};
+    use crate::{RefAudioUtilities, RwkvSampler};
+    // use crate::{TtsPipeline, TtsPipelineArgs}; // 已移动到备份目录
     use anyhow::Result;
 
     /// Args结构体定义
@@ -62,8 +77,9 @@ pub mod tts_generator {
 
         /// 异步创建新的TTS生成器
         pub async fn new_async(model_path: String, vocab_path: String) -> Result<Self> {
-            // 创建RWKV采样器
-            let rwkv_sampler = RwkvSampler::new(&model_path, &vocab_path).await?;
+            // 创建RWKV采样器，使用默认量化配置
+            let quant_config = Some(RwkvSampler::default_quant_config());
+            let rwkv_sampler = RwkvSampler::new(&model_path, &vocab_path, quant_config).await?;
 
             Ok(Self {
                 rwkv_sampler: Some(rwkv_sampler),
@@ -83,37 +99,12 @@ pub mod tts_generator {
             self
         }
 
-        /// 生成语音
-        pub async fn generate(&self, text: &str, args: &Args) -> Result<Vec<f32>> {
-            // 创建TTS流水线参数
-            let pipeline_args = TtsPipelineArgs {
-                text: text.to_string(),
-                model_path: args.model_path.clone(),
-                vocab_path: args.vocab_path.clone(),
-                temperature: args.temperature,
-                top_p: args.top_p,
-                top_k: args.top_k,
-                max_tokens: args.max_tokens,
-                age: args.age.clone(),
-                gender: args.gender.clone(),
-                emotion: args.emotion.clone(),
-                pitch: 200.0, // 这里需要从参数中获取实际的音高值，暂时使用默认值
-                speed: 4.2,   // 这里需要从参数中获取实际的语速值，暂时使用默认值
-                zero_shot: args.zero_shot,
-                ref_audio_path: args.ref_audio_path.clone(),
-                prompt_text: args.prompt_text.clone(),
-                output_path: args.output_path.clone(),
-                validate: args.validate,
-                seed: None,
-            };
-
-            // 创建TTS流水线
-            let mut pipeline = TtsPipeline::new(&pipeline_args).await?;
-
-            // 生成语音
-            let audio_samples = pipeline.generate_speech(&pipeline_args).await?;
-
-            Ok(audio_samples)
+        /// 生成语音 (暂时禁用，因为TtsPipeline已移动到备份目录)
+        pub async fn generate(&self, _text: &str, _args: &Args) -> Result<Vec<f32>> {
+            // TODO: 使用lightweight_tts_pipeline替代
+            Err(anyhow::anyhow!(
+                "TtsPipeline已移动到备份目录，请使用lightweight_tts_pipeline"
+            ))
         }
 
         /// 保存音频到WAV文件

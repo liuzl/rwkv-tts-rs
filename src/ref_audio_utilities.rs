@@ -35,16 +35,22 @@ impl RefAudioUtilities {
     ) -> Result<Self> {
         // 使用 ort 2.x 的 Session::builder() API 构建会话
         let ort_session = Session::builder()?
+            .with_inter_threads(1)?
+            .with_intra_threads(1)?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
             .commit_from_file(onnx_model_path)?;
 
         let wav2vec2_session = Session::builder()?
+            .with_inter_threads(1)?
+            .with_intra_threads(1)?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
             .commit_from_file(wav2vec2_path)?;
 
         // 可选的detokenizer会话
         let bicodec_detokenizer_session = if let Some(detokenizer_path) = detokenizer_path {
             match Session::builder()?
+                .with_inter_threads(1)?
+                .with_intra_threads(1)?
                 .with_optimization_level(GraphOptimizationLevel::Level3)?
                 .commit_from_file(detokenizer_path)
             {

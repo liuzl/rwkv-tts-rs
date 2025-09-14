@@ -42,15 +42,15 @@ jobs:
         include:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact_name: tts_cli.exe
+            artifact_name: rwkvtts_server.exe
             asset_name: rwkv-tts-rs-windows-x64.zip
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact_name: tts_cli
+            artifact_name: rwkvtts_server
             asset_name: rwkv-tts-rs-linux-x64.tar.gz
           - os: macos-latest
             target: x86_64-apple-darwin
-            artifact_name: tts_cli
+            artifact_name: rwkvtts_server
             asset_name: rwkv-tts-rs-macos-x64.tar.gz
 
     steps:
@@ -114,7 +114,7 @@ jobs:
     - name: Build
       run: |
         echo "Starting build for target: ${{ matrix.target }}"
-        cargo build --release --target ${{ matrix.target }} --bin tts_cli --verbose
+        cargo build --release --target ${{ matrix.target }} --bin rwkvtts_server --verbose
       env:
         RUST_BACKTRACE: 1
 
@@ -144,7 +144,7 @@ jobs:
         # Create release directory structure for Linux/macOS
         mkdir -p release-package
         # Copy executable
-        cp target/${{ matrix.target }}/release/tts_cli release-package/
+        cp target/${{ matrix.target }}/release/rwkvtts_server release-package/
         # Copy ONNX Runtime dynamic library
         if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
           cp onnxruntime-linux-x64-1.22.0/lib/libonnxruntime.so release-package/

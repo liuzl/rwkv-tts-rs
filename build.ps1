@@ -1,6 +1,11 @@
-pip install -U huggingface_hub
+# 安装huggingface_hub
+Start-Job -ScriptBlock { pip install huggingface_hub }
 
-Start-Job { huggingface-cli download cgisky/rwkv-tts --repo-type model --local-dir assets/model/ --resume-download --local-dir-use-symlinks False }
-Start-Job { cargo build --release }
+# 下载模型
+Start-Job -ScriptBlock { python download_models.py }
 
-Get-Job | Wait-Job | Receive-Job
+# 编译项目
+Start-Job -ScriptBlock { cargo build --release --bin rwkvtts_server }
+
+# 等待所有作业完成
+Get-Job | Wait-Job
