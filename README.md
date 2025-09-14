@@ -3,40 +3,85 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.78+-orange.svg)](https://www.rust-lang.org)
 [![Hugging Face](https://img.shields.io/badge/🤗-Hugging%20Face-yellow.svg)](https://huggingface.co/cgisky/rwkv-tts/tree/main)
+[![Version](https://img.shields.io/badge/version-0.2.0-green.svg)](https://github.com/your-repo/rwkv-tts-rs/releases)
 
-RWKV-based Text-to-Speech implementation in Rust.
+RWKV-based Text-to-Speech implementation in Rust with embedded Web UI.
 
 **Based on**: This project is a Rust implementation inspired by the original Python project [yueyulin/respark](https://huggingface.co/yueyulin/respark), which is a TTS system with RWKV-7 LM modeling audio tokens.
 
 ## Features
 
-- High-performance TTS generation using RWKV models
-- Command-line interface for batch processing
-- Interactive CLI for real-time TTS
-- Support for multiple languages and voice characteristics
-- Zero-shot voice cloning with reference audio
-- Customizable voice properties (pitch, speed, energy)
+- 🚀 **Single-file deployment** - All-in-one executable with embedded Web UI
+- 🌐 **Web Interface** - User-friendly browser-based interface for TTS generation
+- ⚡ **High-performance** TTS generation using RWKV models
+- 🎯 **Zero-shot voice cloning** with reference audio
+- 🎛️ **Customizable voice properties** (pitch, speed, emotion, age, gender)
+- 🌍 **Multi-language support** with automatic model downloading
+- 🔄 **Mirror support** - Automatic fallback to China mirrors for faster downloads
+- 📱 **Cross-platform** - Windows, Linux, and macOS support
 
 
-## Installation
+## Quick Start
+
+### 1. Build the Project
 
 ```bash
-# linux/macOS
+# Linux/macOS
 sh build.sh
 
-# windows
+# Windows
 .\build.ps1
 ```
 
-> Model Source: https://huggingface.co/cgisky/rwkv-tts/
+The build script will:
+- Automatically download required models from Hugging Face
+- Support mirror fallback for users in China
+- Compile the single-file executable with embedded Web UI
+
+### 2. Run the Web Server
+
+```bash
+# Start the web server (default port: 8080)
+cargo run --release --bin rwkvtts_server
+
+# Or specify a custom port
+cargo run --release --bin rwkvtts_server -- --port 3000
+```
+
+### 3. Access the Web Interface
+
+Open your browser and navigate to:
+- Default: http://localhost:8080
+- Custom port: http://localhost:3000
+
+The Web UI provides an intuitive interface for:
+- Text input and TTS generation
+- Voice parameter adjustment (age, gender, emotion, pitch, speed)
+- Zero-shot voice cloning with reference audio upload
+- Real-time audio playback and download
+
+> **Model Source**: https://huggingface.co/cgisky/rwkv-tts/
+> **Mirror Support**: Automatic fallback to https://hf-mirror.com for users in China
 
 ## Usage
 
-### CLI Tool
+### Web Interface (Recommended)
+
+The easiest way to use RWKV TTS is through the embedded Web interface:
+
+1. Start the server: `cargo run --release --bin rwkvtts_server`
+2. Open http://localhost:8080 in your browser
+3. Enter your text and adjust voice parameters
+4. Click "Generate" to create speech
+5. Play or download the generated audio
+
+### Command Line Interface
+
+For batch processing or automation, you can use the CLI:
 
 #### Basic Usage
 ```bash
-cargo run --bin tts_cli -- --text "Hello, world!" --output output.wav
+cargo run --release --bin rwkvtts_server -- --text "Hello, world!" --output output.wav
 ```
 
 #### Command Line Parameters
@@ -110,138 +155,126 @@ cargo run --bin tts_cli -- --text "Hello, world!" --output output.wav
 
 **Basic TTS:**
 ```bash
-cargo run --bin tts_cli -- --text "你好，世界！" --output ./output
+cargo run --release --bin rwkvtts_server -- --text "你好，世界！" --output ./output
 ```
 
 **Custom Voice Settings:**
 ```bash
-cargo run --bin tts_cli -- --text "Hello, world!" --gender male --age adult --emotion happy --speed 3.5
+cargo run --release --bin rwkvtts_server -- --text "Hello, world!" --gender male --age youth-adult --emotion happy --speed 3.5
 ```
 
 **Zero-shot Voice Cloning:**
 ```bash
-cargo run --bin tts_cli -- --text "Clone this voice" --zero-shot --ref-audio ./reference.wav --prompt-text "Sample text"
+cargo run --release --bin rwkvtts_server -- --text "Clone this voice" --zero-shot --ref-audio ./reference.wav --prompt-text "Sample text"
 ```
 
-
-### Interactive CLI
+**Start Web Server:**
 ```bash
-cargo run --bin interactive_tts_cli
+# Default port (8080)
+cargo run --release --bin rwkvtts_server
+
+# Custom port
+cargo run --release --bin rwkvtts_server -- --port 3000
 ```
 
 ## Requirements
 
-- Rust 1.70 or later
-- ONNX Runtime library (version 1.22) for neural network inference
-  - Windows: Download from [Microsoft ONNX Runtime releases](https://github.com/microsoft/onnxruntime/releases)
+- **Rust 1.78 or later** - Required for compilation
+- **ONNX Runtime library (version 1.22)** - For neural network inference
+  - Windows: Automatically configured by build script
   - Linux: Install via package manager or download prebuilt binaries
   - macOS: Install via Homebrew `brew install onnxruntime` or download prebuilt binaries
-- Audio processing libraries
+- **Internet connection** - For initial model download (models are cached locally)
+- **Modern web browser** - For accessing the Web UI (Chrome, Firefox, Safari, Edge)
 
-## ONNX Runtime Setup
+## Installation Details
 
-### Windows
+### Automatic Setup
 
-This project includes ONNX Runtime 1.22.1 for Windows. To configure the environment:
+The build scripts (`build.sh` / `build.ps1`) handle everything automatically:
+- Download and configure ONNX Runtime
+- Download TTS models with mirror fallback
+- Compile the single-file executable
+- Embed the Web UI into the binary
 
-**Option 1: Using PowerShell (Recommended)**
+### Manual ONNX Runtime Setup (if needed)
+
+**Windows:**
 ```powershell
-.\setup_onnx.ps1
-cargo build --release
+# The build script handles this automatically
+.\build.ps1
 ```
 
-**Option 2: Using Command Prompt**
-```cmd
-setup_onnx.bat
-cargo build --release
+**Linux/macOS:**
+```bash
+# Install ONNX Runtime
+# Ubuntu/Debian: apt install libonnxruntime-dev
+# macOS: brew install onnxruntime
+# Or download from: https://github.com/microsoft/onnxruntime/releases
+
+# Then build
+sh build.sh
 ```
 
-**Option 3: Manual Setup**
-The build script (`build.rs`) automatically configures the ONNX Runtime paths during compilation.
+### Model Download
 
-### Linux/macOS
-
-Install ONNX Runtime through your package manager or download prebuilt binaries from the official releases.
+Models are automatically downloaded on first run:
+- **Primary source**: https://huggingface.co/cgisky/rwkv-tts/
+- **Mirror fallback**: https://hf-mirror.com (for users in China)
+- **Local cache**: `./assets/model/` (reused on subsequent runs)
 
 ## Troubleshooting
 
-### LINK : fatal error LNK1181: 无法打开输入文件'onnxruntime.lib'
+### Build Issues
 
-这个错误通常发生在 Windows 平台上编译时，表示链接器无法找到 ONNX Runtime 库文件。
+**Problem**: `LINK : fatal error LNK1181: 无法打开输入文件'onnxruntime.lib'`
 
-#### 问题原因分析
+**Solution**: Run the build script which automatically handles ONNX Runtime setup:
+```bash
+# Windows
+.\build.ps1
 
-1. **库文件缺失**: ONNX Runtime 库文件未正确下载或放置在预期位置
-2. **路径配置错误**: `build.rs` 中配置的库路径与实际文件位置不匹配
-3. **环境变量未设置**: 缺少必要的环境变量指向 ONNX Runtime 库
-
-#### 解决方案
-
-**方案 1: 设置环境变量 (推荐)**
-
-如果你已经下载了 ONNX Runtime 库，可以通过设置环境变量来指定库路径：
-
-```powershell
-# PowerShell
-$env:ORT_LIB_LOCATION = "C:\path\to\your\onnxruntime\lib"
-cargo build --release
+# Linux/macOS  
+sh build.sh
 ```
 
-```cmd
-# Command Prompt
-set ORT_LIB_LOCATION=C:\path\to\your\onnxruntime\lib
-cargo build --release
-```
+### Model Download Issues
 
-**方案 2: 手动下载并放置库文件**
+**Problem**: Slow or failed model downloads
 
-1. 从 [Microsoft ONNX Runtime releases](https://github.com/microsoft/onnxruntime/releases) 下载适合你平台的版本
-2. 解压到项目根目录下的以下路径之一：
-   - `./第三方库源码/onnxruntime-win-x64-1.22.1/` (Windows x64)
-   - `./第三方库源码/onnxruntime-win-arm64-1.22.1/` (Windows ARM64)
-   - `./onnxruntime-win-x64-1.22.1/` (Windows x64)
-   - `./onnxruntime-win-arm64-1.22.1/` (Windows ARM64)
+**Solution**: The system automatically tries mirror fallback:
+1. Primary: https://huggingface.co/cgisky/rwkv-tts/
+2. Fallback: https://hf-mirror.com (China mirror)
 
-**方案 3: 使用项目提供的设置脚本**
+**Problem**: "Model not found" errors
 
-```powershell
-# PowerShell
-.\setup_onnx.ps1
-cargo build --release
-```
+**Solution**: Ensure internet connection and run the build script to download models automatically.
 
-```cmd
-# Command Prompt
-setup_onnx.bat
-cargo build --release
-```
+### Web Interface Issues
 
-#### 不同平台的具体操作步骤
+**Problem**: Cannot access web interface
 
-**Windows x64:**
-1. 下载 `onnxruntime-win-x64-1.22.1.zip`
-2. 解压到 `./onnxruntime-win-x64-1.22.1/`
-3. 确保 `lib/onnxruntime.lib` 文件存在
-4. 运行 `cargo build --release`
+**Solutions**:
+1. Check if the server is running: `cargo run --release --bin rwkvtts_server`
+2. Verify the port (default: 8080): http://localhost:8080
+3. Try a different port: `cargo run --release --bin rwkvtts_server -- --port 3000`
+4. Check firewall settings
 
-**Windows ARM64:**
-1. 下载 `onnxruntime-win-arm64-1.22.1.zip`
-2. 解压到 `./onnxruntime-win-arm64-1.22.1/`
-3. 确保 `lib/onnxruntime.lib` 文件存在
-4. 运行 `cargo build --release`
+### Performance Issues
 
-**验证安装:**
-```powershell
-# 检查库文件是否存在
-Test-Path "./onnxruntime-win-x64-1.22.1/lib/onnxruntime.lib"
-# 应该返回 True
-```
+**Problem**: Slow TTS generation
 
-如果问题仍然存在，请检查：
-1. 下载的 ONNX Runtime 版本是否与项目要求匹配 (1.22.1)
-2. 文件路径是否正确
-3. 是否有足够的磁盘空间
-4. 防病毒软件是否阻止了文件访问
+**Solutions**:
+1. Ensure you're using `--release` flag for optimal performance
+2. Close other resource-intensive applications
+3. Use shorter text inputs for faster generation
+
+### General Tips
+
+- Always use `cargo run --release` for better performance
+- Models are cached locally after first download
+- Check system requirements (Rust 1.78+, modern browser)
+- For detailed logs, check the console output when running the server
 
 ## License
 
