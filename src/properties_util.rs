@@ -36,29 +36,29 @@ const GENDER_MAP: &[(&str, i32)] = &[("female", 46), ("male", 47)];
 /// 情感映射表
 const EMOTION_MAP: &[(&str, i32)] = &[
     ("UNKNOWN", 21),
-    ("ANGRY", 22),
-    ("DISGUSTED", 23),
-    ("FEARFUL", 24),
-    ("HAPPY", 25),
-    ("NEUTRAL", 26),
-    ("SAD", 27),
+    ("NEUTRAL", 22),
+    ("ANGRY", 23),
+    ("HAPPY", 24),
+    ("SAD", 25),
+    ("FEARFUL", 26),
+    ("DISGUSTED", 27),
     ("SURPRISED", 28),
-    ("ANNOYED", 29),
-    ("TIRED", 30),
-    ("LAUGHING", 31),
-    ("TERRIFIED", 32),
-    ("SHOUTING", 33),
-    ("WHISPERING", 34),
-    ("UNFRIENDLY", 35),
-    ("ENUNCIATED", 36),
-    ("SINGING", 37),
-    ("QUESTIONING", 38),
-    ("CONFUSED", 39),
-    ("SERIOUS", 40),
-    ("SMILING", 41),
-    ("EXCITED", 42),
-    ("FRIENDLY", 43),
-    ("HUMOROUS", 44),
+    ("SARCASTIC", 29),
+    ("EXCITED", 30),
+    ("SLEEPY", 31),
+    ("CONFUSED", 32),
+    ("EMPHASIS", 33),
+    ("LAUGHING", 34),
+    ("SINGING", 35),
+    ("WORRIED", 36),
+    ("WHISPER", 37),
+    ("ANXIOUS", 38),
+    ("NO-AGREEMENT", 39),
+    ("APOLOGETIC", 40),
+    ("CONCERNED", 41),
+    ("ENUNCIATED", 42),
+    ("ASSERTIVE", 43),
+    ("ENCOURAGING", 44),
     ("CONTEMPT", 45),
 ];
 
@@ -117,8 +117,10 @@ pub fn classify_pitch(pitch: f32, gender: &str, age: u8) -> String {
                     "low_pitch".to_string()
                 } else if pitch < 290.0 {
                     "medium_pitch".to_string()
-                } else {
+                } else if pitch < 330.0 {
                     "high_pitch".to_string()
+                } else {
+                    "very_high_pitch".to_string()
                 }
             }
             "teenager" => {
@@ -273,6 +275,24 @@ pub fn classify_speed(speed: f32) -> String {
     }
 }
 
+/// 将年龄字符串转换为对应的数值
+///
+/// # 参数
+/// * `age_str` - 年龄字符串 ("child", "teenager", "youth-adult", "middle-aged", "elderly")
+///
+/// # 返回值
+/// 返回对应的年龄数值，如果无法识别则返回25
+pub fn age_string_to_number(age_str: &str) -> u8 {
+    match age_str {
+        "child" => 10,
+        "teenager" => 16,
+        "youth-adult" => 25,
+        "middle-aged" => 45,
+        "elderly" => 70,
+        _ => 25, // 默认值
+    }
+}
+
 /// 根据年龄值分类年龄属性
 ///
 /// # 参数
@@ -390,5 +410,29 @@ mod tests {
         assert_eq!(classify_age(25), "youth-adult");
         assert_eq!(classify_age(45), "middle-aged");
         assert_eq!(classify_age(70), "elderly");
+    }
+
+    #[test]
+    fn test_age_string_to_number() {
+        assert_eq!(age_string_to_number("child"), 10);
+        assert_eq!(age_string_to_number("teenager"), 16);
+        assert_eq!(age_string_to_number("youth-adult"), 25);
+        assert_eq!(age_string_to_number("middle-aged"), 45);
+        assert_eq!(age_string_to_number("elderly"), 70);
+        assert_eq!(age_string_to_number("unknown"), 25); // 默认值
+    }
+
+    #[test]
+    fn test_child_female_very_high_pitch() {
+        // 测试儿童女性极高音分类
+        let result = classify_pitch(350.0, "female", 10);
+        assert_eq!(result, "very_high_pitch");
+        
+        // 测试边界值
+        let result = classify_pitch(330.0, "female", 10);
+        assert_eq!(result, "very_high_pitch");
+        
+        let result = classify_pitch(329.0, "female", 10);
+        assert_eq!(result, "high_pitch");
     }
 }

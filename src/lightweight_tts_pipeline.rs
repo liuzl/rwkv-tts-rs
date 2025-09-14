@@ -76,11 +76,18 @@ impl LightweightTtsPipeline {
         if args.zero_shot {
             vec![] // Zero-shot模式下由参考音频处理
         } else {
-            let age_num = args.age.parse::<u8>().unwrap_or(25);
-            properties_util::convert_properties_to_tokens(
-                args.speed,
-                args.pitch,
-                age_num,
+            // 对speed和pitch进行分类转换
+            let speed_class = properties_util::classify_speed(args.speed);
+            // 将字符串年龄转换为数值用于音高分类
+            let age_for_pitch = properties_util::age_string_to_number(&args.age);
+            let pitch_class =
+                properties_util::classify_pitch(args.pitch, &args.gender, age_for_pitch);
+
+            // 直接使用字符串年龄调用convert_standard_properties_to_tokens
+            properties_util::convert_standard_properties_to_tokens(
+                &speed_class,
+                &pitch_class,
+                &args.age, // 直接传递字符串年龄
                 &args.gender,
                 &args.emotion,
             )

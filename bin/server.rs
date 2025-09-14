@@ -31,8 +31,6 @@ use web_rwkv::runtime::model::Quant;
 #[derive(Debug, Deserialize)]
 struct TtsRequest {
     text: String,
-    #[allow(dead_code)]
-    speaker: Option<String>,
     temperature: Option<f32>,
     top_p: Option<f32>,
     #[allow(dead_code)]
@@ -199,7 +197,6 @@ async fn handle_tts_with_file_upload(
 
     // 提取文本和其他参数
     let text: String = req.form("text").await.unwrap_or_default();
-    let _speaker: String = req.form("speaker").await.unwrap_or_default();
     let temperature: f32 = req
         .form("temperature")
         .await
@@ -209,9 +206,9 @@ async fn handle_tts_with_file_upload(
     let top_p: f32 = req
         .form("top_p")
         .await
-        .unwrap_or("0.3".to_string())
+        .unwrap_or("0.90".to_string())
         .parse()
-        .unwrap_or(0.3);
+        .unwrap_or(0.90);
     let _speed: f32 = req
         .form("speed")
         .await
@@ -457,7 +454,7 @@ async fn handle_tts_json(req: &mut Request, res: &mut Response) -> Result<(), St
         ref_audio_path: tts_request.ref_audio_path.clone().unwrap_or_default(),
         zero_shot: tts_request.ref_audio_path.is_some(),
         temperature: tts_request.temperature.unwrap_or(1.0),
-        top_p: tts_request.top_p.unwrap_or(0.8),
+        top_p: tts_request.top_p.unwrap_or(0.90),
         top_k: 100,
         max_tokens: 8000,
         seed: tts_request.seed,

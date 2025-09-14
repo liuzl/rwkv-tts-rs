@@ -625,6 +625,152 @@
                 font-size: 0.8rem;
             }
         }
+
+        /* API Documentation Styles */
+        .api-documentation {
+            max-width: 100%;
+            padding: 20px;
+        }
+
+        .api-documentation h2 {
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+            margin-bottom: 30px;
+        }
+
+        .api-section {
+            margin-bottom: 40px;
+            background: white;
+            border-radius: 8px;
+            padding: 25px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .api-section h3 {
+            color: #34495e;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+
+        .api-section h4 {
+            color: #7f8c8d;
+            margin: 20px 0 10px 0;
+            font-size: 1.1em;
+        }
+
+        .code-block {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 15px 0;
+            overflow-x: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+
+        .code-block code {
+            background: none;
+            color: inherit;
+            padding: 0;
+            font-size: inherit;
+        }
+
+        .code-block pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .param-table {
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            overflow: hidden;
+            margin: 15px 0;
+        }
+
+        .param-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr 2fr;
+            border-bottom: 1px solid #eee;
+        }
+
+        .param-row:last-child {
+            border-bottom: none;
+        }
+
+        .param-row.header {
+            background: #3498db;
+            color: white;
+            font-weight: bold;
+        }
+
+        .param-row > div {
+            padding: 12px 15px;
+            border-right: 1px solid #eee;
+        }
+
+        .param-row.header > div {
+            border-right: 1px solid rgba(255,255,255,0.3);
+        }
+
+        .param-row > div:last-child {
+            border-right: none;
+        }
+
+        .param-name {
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+        }
+
+        .param-type {
+            color: #e74c3c;
+            font-style: italic;
+        }
+
+        .param-required {
+            text-align: center;
+        }
+
+        .note-list {
+            background: #f8f9fa;
+            border-left: 4px solid #3498db;
+            padding: 20px;
+            margin: 15px 0;
+            border-radius: 0 6px 6px 0;
+        }
+
+        .note-list li {
+            margin-bottom: 8px;
+            line-height: 1.5;
+        }
+
+        @media (max-width: 768px) {
+            .param-row {
+                grid-template-columns: 1fr;
+                gap: 0;
+            }
+            
+            .param-row > div {
+                border-right: none;
+                border-bottom: 1px solid #eee;
+            }
+            
+            .param-row > div:last-child {
+                border-bottom: none;
+            }
+            
+            .api-section {
+                padding: 15px;
+            }
+            
+            .code-block {
+                font-size: 12px;
+                padding: 10px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -637,6 +783,7 @@
         <div class="tab-navigation">
             <button class="tab-button active" onclick="switchTab('singleTab')">🎵 单次测试</button>
             <button class="tab-button" onclick="switchTab('concurrentTab')">⚡ 并发测试</button>
+            <button class="tab-button" onclick="switchTab('apiTab')">📖 API使用说明</button>
         </div>
 
         <div id="singleTab" class="tab-content active">
@@ -658,16 +805,6 @@
                 </button>
                 <div class="advanced-content" id="advancedContent">
                     <div class="form-row">
-                        <div class="form-group">
-                            <label for="speaker">说话人</label>
-                            <input 
-                                type="text" 
-                                id="speaker" 
-                                name="speaker" 
-                                class="form-control" 
-                                placeholder="可选，指定说话人"
-                            >
-                        </div>
                         <div class="form-group">
                             <label for="temperature">温度 (0.1-2.0)</label>
                             <input 
@@ -693,7 +830,7 @@
                                 min="0.1" 
                                 max="1.0" 
                                 step="0.1" 
-                                value="0.3"
+                                value="0.90"
                             >
                         </div>
                         <div class="form-group">
@@ -913,6 +1050,250 @@
                 </div>
             </div>
         </div>
+
+        <div id="apiTab" class="tab-content">
+            <div class="api-documentation">
+                <h2>📖 API 使用说明</h2>
+                
+                <div class="api-section">
+                    <h3>🔗 API 端点</h3>
+                    <div class="code-block">
+                        <code>POST /api/tts</code>
+                    </div>
+                    <p>用于生成语音的主要API端点。支持JSON和multipart/form-data两种请求格式。</p>
+                </div>
+
+                <div class="api-section">
+                    <h3>📋 请求参数</h3>
+                    <div class="param-table">
+                        <div class="param-row header">
+                            <div class="param-name">参数名</div>
+                            <div class="param-type">类型</div>
+                            <div class="param-required">必需</div>
+                            <div class="param-description">说明</div>
+                        </div>
+                        <div class="param-row">
+                            <div class="param-name">text</div>
+                            <div class="param-type">string</div>
+                            <div class="param-required">是</div>
+                            <div class="param-description">要转换为语音的文本内容</div>
+                        </div>
+                        <div class="param-row">
+                            <div class="param-name">temperature</div>
+                            <div class="param-type">float</div>
+                            <div class="param-required">否</div>
+                            <div class="param-description">温度参数 (0.1-2.0)，默认1.0</div>
+                        </div>
+                        <div class="param-row">
+                            <div class="param-name">top_p</div>
+                            <div class="param-type">float</div>
+                            <div class="param-required">否</div>
+                            <div class="param-description">Top-P参数 (0.1-1.0)，默认0.3</div>
+                        </div>
+                        <div class="param-row">
+                            <div class="param-name">speed</div>
+                            <div class="param-type">float</div>
+                            <div class="param-required">否</div>
+                            <div class="param-description">语速 (0.5-2.0)，默认1.0</div>
+                        </div>
+                        <div class="param-row">
+                            <div class="param-name">seed</div>
+                            <div class="param-type">integer</div>
+                            <div class="param-required">否</div>
+                            <div class="param-description">随机种子，用于复现结果</div>
+                        </div>
+                        <div class="param-row">
+                            <div class="param-name">age</div>
+                            <div class="param-type">string</div>
+                            <div class="param-required">否</div>
+                            <div class="param-description">年龄：child, teenager, youth-adult, middle-aged, elderly</div>
+                        </div>
+                        <div class="param-row">
+                            <div class="param-name">gender</div>
+                            <div class="param-type">string</div>
+                            <div class="param-required">否</div>
+                            <div class="param-description">性别：male, female</div>
+                        </div>
+                        <div class="param-row">
+                            <div class="param-name">emotion</div>
+                            <div class="param-type">string</div>
+                            <div class="param-required">否</div>
+                            <div class="param-description">情感：NEUTRAL, HAPPY, SAD, ANGRY等</div>
+                        </div>
+                        <div class="param-row">
+                            <div class="param-name">pitch</div>
+                            <div class="param-type">string</div>
+                            <div class="param-required">否</div>
+                            <div class="param-description">音调：low_pitch, medium_pitch, high_pitch, very_high_pitch</div>
+                        </div>
+                        <div class="param-row">
+                            <div class="param-name">zero_shot</div>
+                            <div class="param-type">boolean</div>
+                            <div class="param-required">否</div>
+                            <div class="param-description">是否启用Zero-shot模式</div>
+                        </div>
+                        <div class="param-row">
+                            <div class="param-name">prompt_text</div>
+                            <div class="param-type">string</div>
+                            <div class="param-required">否</div>
+                            <div class="param-description">Zero-shot模式下的提示词</div>
+                        </div>
+                        <div class="param-row">
+                            <div class="param-name">refAudioFile</div>
+                            <div class="param-type">file</div>
+                            <div class="param-required">否</div>
+                            <div class="param-description">Zero-shot模式下的参考音频文件</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="api-section">
+                    <h3>📤 响应格式</h3>
+                    <h4>成功响应：</h4>
+                    <div class="code-block">
+                        <pre><code>{
+  "success": true,
+  "audio_base64": "UklGRiQAAABXQVZFZm10IBAAAAABAAEA...",
+  "duration_ms": 1234,
+  "rtf": 0.123,
+  "message": "语音生成成功"
+}</code></pre>
+                    </div>
+                    
+                    <h4>错误响应：</h4>
+                    <div class="code-block">
+                        <pre><code>{
+  "success": false,
+  "error": "错误描述",
+  "message": "详细错误信息"
+}</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-section">
+                    <h3>💡 使用示例</h3>
+                    
+                    <h4>cURL 示例：</h4>
+                    <div class="code-block">
+                        <pre><code># 基本请求
+curl -X POST http://localhost:8080/api/tts \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "你好，这是一个测试文本",
+    "temperature": 1.0,
+    "top_p": 0.3,
+    "speed": 1.0
+  }'
+
+# Zero-shot模式（带文件上传）
+curl -X POST http://localhost:8080/api/tts \
+  -F "text=你好，这是一个测试文本" \
+  -F "zero_shot=true" \
+  -F "prompt_text=这是一个温和的女性声音" \
+  -F "refAudioFile=@reference.wav"</code></pre>
+                    </div>
+                    
+                    <h4>JavaScript 示例：</h4>
+                    <div class="code-block">
+                        <pre><code>// 基本请求
+const response = await fetch('/api/tts', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    text: '你好，这是一个测试文本',
+    temperature: 1.0,
+    top_p: 0.3,
+    speed: 1.0,
+    age: 'youth-adult',
+    gender: 'female',
+    emotion: 'HAPPY'
+  })
+});
+
+const result = await response.json();
+if (result.success) {
+  // 处理音频数据
+  const audioBlob = base64ToBlob(result.audio_base64, 'audio/wav');
+  const audioUrl = URL.createObjectURL(audioBlob);
+  // 播放或下载音频
+}</code></pre>
+                    </div>
+                    
+                    <h4>Python 示例：</h4>
+                    <div class="code-block">
+                        <pre><code>import requests
+import base64
+
+# 基本请求
+response = requests.post('http://localhost:8080/api/tts', json={
+    'text': '你好，这是一个测试文本',
+    'temperature': 1.0,
+    'top_p': 0.3,
+    'speed': 1.0,
+    'age': 'youth-adult',
+    'gender': 'female',
+    'emotion': 'HAPPY'
+})
+
+if response.status_code == 200:
+    result = response.json()
+    if result['success']:
+        # 保存音频文件
+        audio_data = base64.b64decode(result['audio_base64'])
+        with open('output.wav', 'wb') as f:
+            f.write(audio_data)
+        print(f"音频生成成功，耗时: {result['duration_ms']}ms")
+    else:
+        print(f"生成失败: {result['error']}")</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-section">
+                    <h3>⚠️ 错误码说明</h3>
+                    <div class="param-table">
+                        <div class="param-row header">
+                            <div class="param-name">HTTP状态码</div>
+                            <div class="param-type">错误类型</div>
+                            <div class="param-required">说明</div>
+                            <div class="param-description">解决方案</div>
+                        </div>
+                        <div class="param-row">
+                            <div class="param-name">200</div>
+                            <div class="param-type">成功</div>
+                            <div class="param-required">请求成功</div>
+                            <div class="param-description">检查响应中的success字段</div>
+                        </div>
+                        <div class="param-row">
+                            <div class="param-name">400</div>
+                            <div class="param-type">请求错误</div>
+                            <div class="param-required">参数错误或格式不正确</div>
+                            <div class="param-description">检查请求参数和格式</div>
+                        </div>
+                        <div class="param-row">
+                            <div class="param-name">500</div>
+                            <div class="param-type">服务器错误</div>
+                            <div class="param-required">服务器内部错误</div>
+                            <div class="param-description">检查服务器日志或稍后重试</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="api-section">
+                    <h3>📝 注意事项</h3>
+                    <ul class="note-list">
+                        <li>文本长度建议不超过1000个字符，过长的文本可能导致生成时间过长</li>
+                        <li>Zero-shot模式需要上传参考音频文件，支持WAV、MP3、FLAC、M4A格式</li>
+                        <li>参考音频文件大小建议不超过10MB</li>
+                        <li>相同的seed值可以复现相同的生成结果</li>
+                        <li>temperature值越高，生成的语音越随机；越低，越稳定</li>
+                        <li>API响应中的audio_base64字段包含WAV格式的音频数据</li>
+                        <li>RTF (Real Time Factor) 表示生成速度，值越小表示生成越快</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -1033,7 +1414,6 @@
                     },
                     body: JSON.stringify({
                         text: text,
-                        speaker: document.getElementById('speaker').value,
                         temperature: parseFloat(document.getElementById('temperature').value),
                         top_p: topPVal,
                         speed: parseFloat(document.getElementById('speed').value),
@@ -1339,7 +1719,6 @@
                 // 使用普通的JSON请求
                 const requestData = {
                     text: text,
-                    speaker: formData.get('speaker') || null,
                     temperature: parseFloat(formData.get('temperature')) || 1.0,
                     top_p: parseFloat(formData.get('topP')) || 0.3,
                     speed: parseFloat(formData.get('speed')) || 1.0,
