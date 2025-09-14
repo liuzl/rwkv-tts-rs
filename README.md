@@ -41,18 +41,18 @@ The build script will:
 ### 2. Run the Web Server
 
 ```bash
-# Start the web server (default port: 8080)
+# Start the web server (default port: 3000)
 cargo run --release --bin rwkvtts_server
 
 # Or specify a custom port
-cargo run --release --bin rwkvtts_server -- --port 3000
+cargo run --release --bin rwkvtts_server -- --port 8080
 ```
 
 ### 3. Access the Web Interface
 
 Open your browser and navigate to:
-- Default: http://localhost:8080
-- Custom port: http://localhost:3000
+- Default: http://localhost:3000
+- Custom port: http://localhost:8080
 
 The Web UI provides an intuitive interface for:
 - Text input and TTS generation
@@ -70,111 +70,186 @@ The Web UI provides an intuitive interface for:
 The easiest way to use RWKV TTS is through the embedded Web interface:
 
 1. Start the server: `cargo run --release --bin rwkvtts_server`
-2. Open http://localhost:8080 in your browser
+2. Open http://localhost:3000 in your browser
 3. Enter your text and adjust voice parameters
 4. Click "Generate" to create speech
 5. Play or download the generated audio
 
-### Command Line Interface
+### Server Configuration
 
-For batch processing or automation, you can use the CLI:
-
-#### Basic Usage
-```bash
-cargo run --release --bin rwkvtts_server -- --text "Hello, world!" --output output.wav
-```
+The RWKV TTS server supports various configuration options through command line parameters:
 
 #### Command Line Parameters
 
-**Required Parameters:**
-- `-t, --text <TEXT>`: 要转换的文本 (Text to convert)
-
-**Optional Parameters:**
+**Server Configuration:**
+- `--port <PORT>`: 服务器监听端口 (Server listening port, default: `3000`)
 
 **Model Configuration:**
-- `-m, --model <PATH>`: 模型文件路径 (Model file path, default: `./assets/model`)
-- `-v, --vocab <PATH>`: 词表文件路径 (Vocabulary file path, default: `./assets/model/tokenizer.json`)
-- `-o, --output <PATH>`: 输出音频文件路径 (Output audio file path, default: `./output`)
+- `--model-path <PATH>`: 模型文件路径 (Model file path, default: `assets/model/rwkvtts-Int8_22.prefab`)
+- `--vocab-path <PATH>`: 词汇表文件路径 (Vocabulary file path, default: `assets/model/tokenizer.json`)
+- `--quant-layers <NUMBER>`: 指定量化层数 (Quantization layers, default: `24`)
+- `--quant-type <TYPE>`: 指定量化类型 (Quantization type: none, int8, nf4, sf4, default: `int8`)
+  - 推荐使用 `int8` 以获得最佳稳定性
 
-**Generation Parameters:**
-- `--temperature <FLOAT>`: 采样温度 (Sampling temperature, default: `1.0`)
-- `--top-p <FLOAT>`: Top-p采样参数 (Top-p sampling parameter, default: `0.95`)
-- `--top-k <INT>`: Top-k采样参数 (Top-k sampling parameter, default: `0`)
-- `--max-tokens <INT>`: 最大生成token数 (Maximum tokens to generate, default: `8000`)
+**Performance Configuration:**
+- `--batch-size <NUMBER>`: 批处理最大大小 (Maximum batch size, default: `10`)
+- `--batch-timeout <MS>`: 批处理超时时间（毫秒） (Batch timeout in milliseconds, default: `20`)
+- `--inference-timeout <MS>`: 推理超时时间（毫秒） (Inference timeout in milliseconds, default: `120000`)
 
-**Voice Characteristics:**
-- `--age <AGE>`: 说话人年龄 (Speaker age)
-  - 可选值: `child`, `teenager`, `youth-adult`, `middle-aged`, `elderly`
-  - 数值区间: 
-    - `child`: 0-12岁
-    - `teenager`: 13-19岁
-    - `youth-adult`: 20-39岁 (默认)
-    - `middle-aged`: 40-64岁
-    - `elderly`: 65岁以上
-- `--gender <GENDER>`: 说话人性别 (Speaker gender)
-  - 可选值: `female` (默认), `male`
-- `--emotion <EMOTION>`: 情感 (Emotion)
-  - 可选值: `NEUTRAL` (默认), `ANGRY`, `DISGUSTED`, `FEARFUL`, `HAPPY`, `SAD`, `SURPRISED`, `ANNOYED`, `TIRED`, `LAUGHING`, `TERRIFIED`, `SHOUTING`, `WHISPERING`, `UNFRIENDLY`, `ENUNCIATED`, `SINGING`, `QUESTIONING`, `CONFUSED`, `SERIOUS`, `SMILING`, `EXCITED`, `FRIENDLY`, `HUMOROUS`, `CONTEMPT`, `UNKNOWN`
-- `--pitch <FLOAT>`: 音调 (Pitch)
-  - 数值范围: 建议80-400Hz
-  - 系统会根据性别和年龄自动分类为:
-    - `low_pitch` (低音调)
-    - `medium_pitch` (中音调) 
-    - `high_pitch` (高音调)
-    - `very_high_pitch` (极高音调)
-  - 分类区间示例 (女性青年):
-    - low_pitch: <191Hz
-    - medium_pitch: 191-211Hz
-    - high_pitch: 211-232Hz
-    - very_high_pitch: >232Hz
-  - 分类区间示例 (男性青年):
-    - low_pitch: <115Hz
-    - medium_pitch: 115-131Hz
-    - high_pitch: 131-153Hz
-    - very_high_pitch: >153Hz
-  - 默认值: `200.0`
-- `--speed <FLOAT>`: 语速 (Speech speed)
-  - 数值范围: 1.0-10.0
-  - 分类区间:
-    - `very_slow`: ≤3.5
-    - `slow`: 3.5-4.0
-    - `medium`: 4.0-4.5
-    - `fast`: 4.5-5.0
-    - `very_fast`: >5.0
-  - 默认值: `4.2`
+#### Usage Examples
 
-**Zero-shot Voice Cloning:**
-- `--zero-shot`: 启用Zero-shot模式 (Enable zero-shot mode)
-- `--ref-audio <PATH>`: 参考音频路径 (Reference audio path for zero-shot mode)
-- `--prompt-text <TEXT>`: 提示文本 (Prompt text for zero-shot mode, default: `希望你以后能够做的，比我还好呦！`)
-
-**Validation:**
-- `--validate`: 使用ASR验证生成的音频是否正确 (Use ASR to validate generated audio)
-
-#### Examples
-
-**Basic TTS:**
+**Start with Default Settings:**
 ```bash
-cargo run --release --bin rwkvtts_server -- --text "你好，世界！" --output ./output
-```
-
-**Custom Voice Settings:**
-```bash
-cargo run --release --bin rwkvtts_server -- --text "Hello, world!" --gender male --age youth-adult --emotion happy --speed 3.5
-```
-
-**Zero-shot Voice Cloning:**
-```bash
-cargo run --release --bin rwkvtts_server -- --text "Clone this voice" --zero-shot --ref-audio ./reference.wav --prompt-text "Sample text"
-```
-
-**Start Web Server:**
-```bash
-# Default port (8080)
 cargo run --release --bin rwkvtts_server
+```
 
-# Custom port
-cargo run --release --bin rwkvtts_server -- --port 3000
+**Custom Port:**
+```bash
+cargo run --release --bin rwkvtts_server -- --port 8080
+```
+
+**Custom Model Path:**
+```bash
+cargo run --release --bin rwkvtts_server -- --model-path ./custom/model.prefab --vocab-path ./custom/tokenizer.json
+```
+
+**Performance Tuning:**
+```bash
+cargo run --release --bin rwkvtts_server -- --batch-size 20 --batch-timeout 50 --quant-type int8
+```
+
+**Production Deployment:**
+```bash
+cargo run --release --bin rwkvtts_server -- --port 80 --batch-size 50 --inference-timeout 60000
+```
+
+### API Usage
+
+Once the server is running, you can use the TTS service through:
+
+1. **Web Interface**: Navigate to `http://localhost:3000` (or your custom port)
+2. **HTTP API**: Send POST requests to `http://localhost:3000/api/tts`
+3. **Health Check**: GET `http://localhost:3000/api/health`
+4. **Status**: GET `http://localhost:3000/api/status`
+
+The Web UI provides intuitive controls for:
+- Text input and voice parameter adjustment
+- Zero-shot voice cloning with reference audio upload
+- Real-time audio generation and playback
+- Download generated audio files
+
+## HTTP API 文档
+
+### 1. TTS 语音合成 API
+**路径**: `POST /api/tts`
+
+**支持的请求格式**:
+- JSON格式（application/json）
+- Multipart表单格式（multipart/form-data，支持文件上传）
+
+**JSON请求参数**:
+```json
+{
+  "text": "要转换的文本",
+  "temperature": 1.0,
+  "top_p": 0.3,
+  "seed": 42,
+  "age": "youth-adult",
+  "gender": "male",
+  "emotion": "NEUTRAL",
+  "pitch": "medium_pitch",
+  "prompt_text": "可选的提示词"
+}
+```
+
+**Multipart表单参数**:
+- `text`: 要转换的文本（必需）
+- `temperature`: 温度参数（可选，默认1.0）
+- `top_p`: Top-p参数（可选，默认0.3）
+- `seed`: 随机种子（可选）
+- `age`: 年龄特征（可选，默认"youth-adult"）
+- `gender`: 性别特征（可选，默认"male"）
+- `emotion`: 情感特征（可选，默认"NEUTRAL"）
+- `pitch`: 音调（可选，默认"medium_pitch"）
+- `ref_audio`: 参考音频文件（可选，用于零样本语音克隆）
+
+**参数说明**:
+- `age`: "child", "youth-adult", "elderly"
+- `gender`: "male", "female"
+- `emotion`: "NEUTRAL", "HAPPY", "SAD", "ANGRY", "SURPRISED"
+- `pitch`: "low_pitch", "medium_pitch", "high_pitch", "very_high_pitch"
+
+**响应格式**:
+```json
+{
+  "success": true,
+  "message": "TTS生成成功",
+  "audio_base64": "base64编码的WAV音频数据",
+  "duration_ms": 1500,
+  "rtf": 0.25
+}
+```
+
+### 2. 健康检查 API
+**路径**: `GET /api/health`
+
+**响应格式**:
+```json
+{
+  "status": "healthy"
+}
+```
+
+### 3. 服务器状态 API
+**路径**: `GET /api/status`
+
+**响应格式**:
+```json
+{
+  "status": "running",
+  "version": "0.2.0",
+  "uptime_seconds": 3600,
+  "total_requests": 150
+}
+```
+
+### 4. Web界面
+**路径**: `GET /`
+
+返回嵌入式Web UI界面
+
+### 5. 静态资源
+**路径**: `GET /static/<path>`
+
+提供Web UI所需的静态资源文件
+
+**使用示例**:
+
+```bash
+# JSON格式请求
+curl -X POST http://localhost:3000/api/tts \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "你好，这是一个测试",
+    "temperature": 1.0,
+    "top_p": 0.3,
+    "age": "youth-adult",
+    "gender": "female",
+    "emotion": "HAPPY"
+  }'
+
+# Multipart表单请求（带参考音频）
+curl -X POST http://localhost:3000/api/tts \
+  -F "text=你好，这是一个测试" \
+  -F "temperature=1.0" \
+  -F "gender=female" \
+  -F "ref_audio=@reference.wav"
+
+# 健康检查
+curl http://localhost:3000/api/health
+
+# 服务器状态
+curl http://localhost:3000/api/status
 ```
 
 ## Requirements
@@ -256,8 +331,8 @@ sh build.sh
 
 **Solutions**:
 1. Check if the server is running: `cargo run --release --bin rwkvtts_server`
-2. Verify the port (default: 8080): http://localhost:8080
-3. Try a different port: `cargo run --release --bin rwkvtts_server -- --port 3000`
+2. Verify the port (default: 3000): http://localhost:3000
+3. Try a different port: `cargo run --release --bin rwkvtts_server -- --port 8080`
 4. Check firewall settings
 
 ### Performance Issues
