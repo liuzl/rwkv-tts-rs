@@ -135,6 +135,30 @@ class RefAudioUtilities:
         
         return mel_spec
     
+    def zero_mean_unit_variance_normalize(self, input_values: np.ndarray) -> np.ndarray:
+        """
+        零均值单位方差归一化 - 与Rust实现完全一致
+        
+        Args:
+            input_values: 输入音频数据
+            
+        Returns:
+            归一化后的音频数据
+        """
+        # 计算均值 - 与Rust完全一致
+        mean = np.mean(input_values)
+        
+        # 计算标准差 - 与Rust实现完全一致
+        variance_sum = np.sum((input_values - mean) ** 2)
+        std = np.sqrt(variance_sum / len(input_values) + 1e-7)
+        
+        # 归一化 - 与Rust完全一致
+        normalized = (input_values - mean) / std
+        
+        print(f"[DEBUG] Zero-mean unit-variance normalize: mean={mean:.6f}, std={std:.6f}, size={len(input_values)}")
+        
+        return normalized
+    
     def extract_wav2vec2_features(self, wav: np.ndarray) -> np.ndarray:
         """
         使用ONNX wav2vec2模型提取特征，模拟BiCodecTokenizer的行为
@@ -149,8 +173,11 @@ class RefAudioUtilities:
         if self.wav2vec2_session is None:
             raise RuntimeError("wav2vec2模型未加载，请在初始化时提供wav2vec2_path参数")
         
+        # 零均值单位方差归一化 - 与Rust实现保持一致
+        wav_normalized = self.zero_mean_unit_variance_normalize(wav.copy())
+        
         # 添加batch维度
-        input_data = wav[np.newaxis, :].astype(np.float32)  # [1, sequence_length]
+        input_data = wav_normalized[np.newaxis, :].astype(np.float32)  # [1, sequence_length]
         
         # 运行wav2vec2推理
         # 注意：这个ONNX模型已经包含了特征提取器的预处理和多个隐藏层的组合
@@ -219,12 +246,13 @@ class RefAudioUtilities:
         Returns:
             (global_tokens, semantic_tokens)
         """
-        # 处理音频
-        wav, ref_wav = self.process_audio(audio_path)
+        # 处理音频 - 明确禁用音量归一化，与Rust保持一致
+        wav, ref_wav = self.process_audio(audio_path, volume_normalize=False)
         
         # 提取特征
         feat = self.extract_wav2vec2_features(wav)
-        ref_mel = self.extract_mel_spectrogram(ref_wav)
+        # 修复：显式指定win_length参数，与C++和Rust实现保持一致
+        ref_mel = self.extract_mel_spectrogram(ref_wav, win_length=1024)
         
    
         # 添加batch维度
@@ -269,9 +297,9 @@ class RefAudioUtilities:
 # 测试函数
 def test_ref_audio_utilities():
     """测试RefAudioUtilities类"""
-    # 初始化工具类
-    onnx_model_path = '/Volumes/bigdata/models/RWKVTTS_WebRWKV/BiCodecTokenize.onnx'
-    wav2vec2_path = "/Volumes/bigdata/models/RWKVTTS_WebRWKV/wav2vec2-large-xlsr-53.onnx"
+    # 初始化工具类 - 使用与Rust相同的量化模型
+    onnx_model_path = 'assets/model/BiCodecTokenize.onnx'
+    wav2vec2_path = "assets/model/wav2vec2-large-xlsr-53.onnx"  # 使用量化版本
     # 使用与BiCodecTokenizer相同的参数
     utilities = RefAudioUtilities(
         onnx_model_path, 

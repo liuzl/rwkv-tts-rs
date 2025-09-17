@@ -39,8 +39,8 @@ impl BatchTtsManager {
     ) -> Result<Self> {
         let (request_tx, request_rx) = mpsc::unbounded_channel();
         
-        // 创建全局RWKV采样器，使用默认量化配置
-        let quant_config = Some(RwkvSampler::default_quant_config());
+        // 创建全局RWKV采样器，不使用量化配置
+        let quant_config = None;
         let sampler = RwkvSampler::new(model_path, vocab_path, quant_config).await?;
         info!("全局RWKV采样器创建成功，batch_size: {}", batch_size);
         

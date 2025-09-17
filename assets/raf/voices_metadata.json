@@ -1,0 +1,22 @@
+{
+  "voices": [
+    {
+      "id": "voice_20250916_121600_98c0687a",
+      "name": "太乙真人",
+      "prompt_text": "忽然，身边一阵笑声。我看着他们，意气风发的挺直了胸膛。",
+      "created_at": "2025-09-16T12:16:00.026742200Z",
+      "file_path": "assets\\raf\\voice_20250916_121600_98c0687a.raf.json",
+      "file_size": 4166,
+      "checksum": "7228a381597a3541c8252c54e6d2d8c072f11a1e39c980aa5d82a035d291fe21"
+    },
+    {
+      "id": "voice_20250916_131005_1b8dd3b5",
+      "name": "Trump",
+      "prompt_text": "Folks, nobody knows noise better than me, believe me, these other companies, they're terrible, just terrible with noise, but we have the best technology, the absolute best. We're going to make everything so quiet, so beautiful, you won't believe it.",
+      "created_at": "2025-09-16T13:10:05.927140700Z",
+      "file_path": "assets\\raf\\voice_20250916_131005_1b8dd3b5.raf.json",
+      "file_size": 8322,
+      "checksum": "228958934868925911af06766457e9bd8139c99a1183197aabaddf3652d67147"
+    }
+  ]
+}

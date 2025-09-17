@@ -131,8 +131,8 @@ jobs:
         Copy-Item "target\${{ matrix.target }}\release\${{ matrix.artifact_name }}" "release-package\"
         # Copy onnxruntime.dll
         Copy-Item "assets\ort\onnxruntime.dll" "release-package\"
-        # Copy assets/model directory
-        Copy-Item -Recurse "assets\model" "release-package\"
+        # Copy assets/raf directory
+        Copy-Item -Recurse "assets\raf" "release-package\"
         # Create zip package
         Compress-Archive -Path "release-package\*" -DestinationPath "artifacts\${{ matrix.asset_name }}"
 
@@ -151,8 +151,8 @@ jobs:
         elif [ "${{ matrix.os }}" = "macos-latest" ]; then
           cp onnxruntime-osx-x86_64-1.22.0/lib/libonnxruntime.dylib release-package/
         fi
-        # Copy assets/model directory
-        cp -r assets/model release-package/
+        # Copy assets/raf directory
+        cp -r assets/raf release-package/
         # Create tar.gz package
         cd release-package
         tar -czf ../artifacts/${{ matrix.asset_name }} .

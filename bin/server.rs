@@ -10,8 +10,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
+use uuid::Uuid;
+
 // 添加模型下载相关导入
 // use hf_hub::api::tokio::Api; // Now using ApiBuilder::from_env().build()
 use tokio::fs;
@@ -25,6 +27,8 @@ struct Assets;
 // Logger功能暂时禁用
 
 use rwkv_tts_rs::lightweight_tts_pipeline::{LightweightTtsPipeline, LightweightTtsPipelineArgs};
+use rwkv_tts_rs::ref_audio_utilities::RefAudioUtilities;
+use rwkv_tts_rs::voice_feature_manager::{VoiceFeatureManager, VoiceMetadata};
 use web_rwkv::runtime::model::Quant;
 
 /// TTS请求参数
@@ -37,7 +41,7 @@ struct TtsRequest {
     speed: Option<f32>,
     #[allow(dead_code)]
     zero_shot: Option<bool>,
-    ref_audio_path: Option<String>,
+    voice_id: Option<String>, // 音色ID，用于音色克隆
     seed: Option<u64>,
     // 添加新的高级选项
     age: Option<String>,
@@ -46,6 +50,36 @@ struct TtsRequest {
     pitch: Option<String>,
     // 添加提示词字段
     prompt_text: Option<String>,
+}
+
+// VoiceExtractRequest结构体已移除，因为使用multipart表单处理
+
+/// 音色特征提取响应
+#[derive(Debug, Serialize)]
+struct VoiceExtractResponse {
+    success: bool,
+    message: String,
+    voice_id: Option<String>,
+}
+
+/// 音色列表响应
+#[derive(Debug, Serialize)]
+struct VoiceListResponse {
+    success: bool,
+    voices: Vec<VoiceMetadata>,
+}
+
+/// 音色删除请求
+#[derive(Debug, Deserialize)]
+struct VoiceDeleteRequest {
+    voice_id: String,
+}
+
+/// 音色删除响应
+#[derive(Debug, Serialize)]
+struct VoiceDeleteResponse {
+    success: bool,
+    message: String,
 }
 
 /// TTS响应
@@ -63,15 +97,6 @@ struct TtsResponse {
 struct ErrorResponse {
     success: bool,
     error: String,
-}
-
-/// 服务器状态
-#[derive(Debug, Serialize)]
-struct ServerStatus {
-    status: String,
-    version: String,
-    uptime_seconds: u64,
-    total_requests: u64,
 }
 
 /// 将f32音频样本转换为WAV格式的字节数据
@@ -148,6 +173,7 @@ struct AppState {
     #[allow(dead_code)]
     vocab_path: String,
     tts_pipeline: Arc<LightweightTtsPipeline>,
+    voice_manager: Arc<VoiceFeatureManager>,
 }
 
 /// 全局应用状态
@@ -222,6 +248,7 @@ async fn handle_tts_with_file_upload(
         .parse()
         .unwrap_or(false);
     let ref_audio_path: String = req.form("ref_audio_path").await.unwrap_or_default();
+    let voice_id: String = req.form("voice_id").await.unwrap_or_default();
     let seed_str: String = req.form("seed").await.unwrap_or_default();
     let seed: Option<u64> = if seed_str.is_empty() {
         None
@@ -247,13 +274,38 @@ async fn handle_tts_with_file_upload(
     );
 
     // 处理文件上传
-    let uploaded_file_path = req
-        .file("refAudioFile")
-        .await
-        .map(|_file| "uploaded_file_path".to_string());
-    if uploaded_file_path.is_some() {
-        info!("  📁 文件上传处理完成");
-    }
+    let uploaded_file_path = if let Some(file) = req.file("refAudioFile").await {
+        // 获取原始文件名和扩展名
+        let original_filename = file.name().unwrap_or("audio");
+        let extension = std::path::Path::new(original_filename)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("wav"); // 默认为wav
+
+        // 创建临时目录
+        let temp_dir = std::path::PathBuf::from("assets/raf/temp/upload_temp_files");
+        if let Err(e) = tokio::fs::create_dir_all(&temp_dir).await {
+            error!("创建临时目录失败: {}", e);
+            None
+        } else {
+            // 生成临时文件路径，保持原始扩展名
+            let temp_file_path = temp_dir.join(format!("{}.{}", Uuid::new_v4(), extension));
+
+            // 复制上传文件到临时位置
+            match tokio::fs::copy(file.path(), &temp_file_path).await {
+                Ok(_) => {
+                    info!("  📁 文件上传处理完成: {:?}", temp_file_path);
+                    Some(temp_file_path.to_string_lossy().to_string())
+                }
+                Err(e) => {
+                    error!("保存上传文件失败: {}", e);
+                    None
+                }
+            }
+        }
+    } else {
+        None
+    };
 
     // 确定最终使用的参考音频路径
     let final_ref_audio_path = if let Some(ref uploaded_path) = uploaded_file_path {
@@ -266,10 +318,39 @@ async fn handle_tts_with_file_upload(
     let setup_start = std::time::Instant::now();
     let app_state = get_global_app_state();
 
+    // 处理音色ID参数
+    let (final_ref_audio_path, use_voice_clone) = if !voice_id.is_empty() {
+        // 使用音色ID加载预存的音色特征
+        match app_state.voice_manager.load_voice_feature(&voice_id).await {
+            Ok(voice_feature) => {
+                info!(
+                    "🎭 使用音色ID: {}, 音色名称: {}",
+                    voice_id, voice_feature.name
+                );
+                // TODO: 需要实现从音色特征生成临时音频文件的逻辑
+                (String::new(), true)
+            }
+            Err(e) => {
+                error!("加载音色特征失败: {}", e);
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(ErrorResponse {
+                    success: false,
+                    error: format!("音色ID '{}' 不存在或加载失败: {}", voice_id, e),
+                }));
+                return Ok(());
+            }
+        }
+    } else {
+        (
+            final_ref_audio_path.clone(),
+            !final_ref_audio_path.is_empty() || zero_shot,
+        )
+    };
+
     let pipeline_args = LightweightTtsPipelineArgs {
         text: text.clone(),
         ref_audio_path: final_ref_audio_path.clone(),
-        zero_shot: !final_ref_audio_path.is_empty() || zero_shot,
+        zero_shot: use_voice_clone,
         temperature,
         top_p,
         top_k: 100,
@@ -416,6 +497,261 @@ async fn handle_tts_with_file_upload(
     Ok(())
 }
 
+/// 提取音频特征
+async fn extract_audio_features(
+    audio_path: &str,
+) -> Result<(Vec<i32>, Vec<i32>, f32, u32), anyhow::Error> {
+    info!("开始提取音频特征: {}", audio_path);
+
+    // 检查音频文件是否存在
+    if !std::path::Path::new(audio_path).exists() {
+        let error_msg = format!("音频文件不存在: {}", audio_path);
+        error!("{}", error_msg);
+        return Err(anyhow::anyhow!(error_msg));
+    }
+
+    // 验证ONNX模型文件是否存在
+    let onnx_files = [
+        "assets/model/BiCodecTokenize.onnx",
+        "assets/model/wav2vec2-large-xlsr-53.onnx",
+        "assets/model/BiCodecDetokenize.onnx",
+    ];
+
+    for onnx_file in &onnx_files {
+        if !std::path::Path::new(onnx_file).exists() {
+            let error_msg = format!("ONNX模型文件不存在: {}", onnx_file);
+            error!("{}", error_msg);
+            return Err(anyhow::anyhow!(error_msg));
+        }
+    }
+
+    // 创建RefAudioUtilities实例
+    let mut ref_audio_utils = match RefAudioUtilities::new(
+        "assets/model/BiCodecTokenize.onnx",
+        "assets/model/wav2vec2-large-xlsr-53.onnx",
+        6.0, // ref_segment_duration
+        320, // latent_hop_length
+        Some("assets/model/BiCodecDetokenize.onnx"),
+    ) {
+        Ok(utils) => {
+            info!("RefAudioUtilities初始化成功");
+            utils
+        }
+        Err(e) => {
+            let error_msg = format!("RefAudioUtilities初始化失败: {}", e);
+            error!("{}", error_msg);
+            return Err(anyhow::anyhow!(error_msg));
+        }
+    };
+
+    // 提取音频特征tokens
+    let (global_tokens, semantic_tokens) = match ref_audio_utils.tokenize(audio_path) {
+        Ok(tokens) => {
+            info!(
+                "音频特征提取成功，global_tokens长度: {}, semantic_tokens长度: {}",
+                tokens.0.len(),
+                tokens.1.len()
+            );
+            tokens
+        }
+        Err(e) => {
+            let error_msg = format!("音频特征提取失败: {}", e);
+            error!("{}", error_msg);
+            return Err(anyhow::anyhow!(error_msg));
+        }
+    };
+
+    // 计算音频时长和采样率
+    let (audio_duration, sample_rate) = match calculate_audio_info(audio_path) {
+        Ok(info) => {
+            info!(
+                "音频信息计算成功，时长: {:.2}秒, 采样率: {}Hz",
+                info.0, info.1
+            );
+            info
+        }
+        Err(e) => {
+            let error_msg = format!("音频信息计算失败: {}", e);
+            error!("{}", error_msg);
+            return Err(anyhow::anyhow!(error_msg));
+        }
+    };
+
+    info!("音频特征提取完成");
+    Ok((global_tokens, semantic_tokens, audio_duration, sample_rate))
+}
+
+/// 计算音频信息（时长和采样率）
+fn calculate_audio_info(audio_path: &str) -> Result<(f32, u32), anyhow::Error> {
+    debug!("开始计算音频信息: {}", audio_path);
+
+    // 检查文件扩展名判断格式
+    let path = std::path::Path::new(audio_path);
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    match extension.as_str() {
+        "wav" => {
+            // 使用hound库处理WAV文件
+            let reader = match hound::WavReader::open(audio_path) {
+                Ok(reader) => reader,
+                Err(e) => {
+                    let error_msg = format!("无法打开WAV文件 {}: {}", audio_path, e);
+                    error!("{}", error_msg);
+                    return Err(anyhow::anyhow!(error_msg));
+                }
+            };
+
+            let spec = reader.spec();
+            let sample_rate = spec.sample_rate;
+            let channels = spec.channels as u32;
+
+            debug!(
+                "WAV音频规格 - 采样率: {}Hz, 声道数: {}",
+                sample_rate, channels
+            );
+
+            // 验证音频格式
+            if channels == 0 {
+                let error_msg = "无效的WAV文件：声道数为0".to_string();
+                error!("{}", error_msg);
+                return Err(anyhow::anyhow!(error_msg));
+            }
+
+            if sample_rate == 0 {
+                let error_msg = "无效的WAV文件：采样率为0".to_string();
+                error!("{}", error_msg);
+                return Err(anyhow::anyhow!(error_msg));
+            }
+
+            let sample_count = reader.len();
+
+            if sample_count == 0 {
+                let error_msg = "WAV文件为空或无效".to_string();
+                error!("{}", error_msg);
+                return Err(anyhow::anyhow!(error_msg));
+            }
+
+            let duration = sample_count as f32 / spec.sample_rate as f32;
+
+            debug!(
+                "WAV音频信息计算完成 - 时长: {:.2}秒, 总样本数: {}",
+                duration, sample_count
+            );
+
+            Ok((duration, spec.sample_rate))
+        }
+        "mp3" => {
+            // 使用symphonia库处理MP3文件
+            use std::fs::File;
+            use symphonia::core::formats::FormatOptions;
+            use symphonia::core::io::MediaSourceStream;
+            use symphonia::core::meta::MetadataOptions;
+            use symphonia::core::probe::Hint;
+
+            let file = match File::open(audio_path) {
+                Ok(file) => file,
+                Err(e) => {
+                    let error_msg = format!("无法打开MP3文件 {}: {}", audio_path, e);
+                    error!("{}", error_msg);
+                    return Err(anyhow::anyhow!(error_msg));
+                }
+            };
+
+            let mss = MediaSourceStream::new(Box::new(file), Default::default());
+            let mut hint = Hint::new();
+            hint.with_extension("mp3");
+
+            let meta_opts: MetadataOptions = Default::default();
+            let fmt_opts: FormatOptions = Default::default();
+
+            let probed =
+                match symphonia::default::get_probe().format(&hint, mss, &fmt_opts, &meta_opts) {
+                    Ok(probed) => probed,
+                    Err(e) => {
+                        let error_msg = format!("无法解析MP3文件格式 {}: {}", audio_path, e);
+                        error!("{}", error_msg);
+                        return Err(anyhow::anyhow!(error_msg));
+                    }
+                };
+
+            let format = probed.format;
+            let track = match format
+                .tracks()
+                .iter()
+                .find(|t| t.codec_params.codec != symphonia::core::codecs::CODEC_TYPE_NULL)
+            {
+                Some(track) => track,
+                None => {
+                    let error_msg = "MP3文件中未找到有效的音频轨道".to_string();
+                    error!("{}", error_msg);
+                    return Err(anyhow::anyhow!(error_msg));
+                }
+            };
+
+            let sample_rate = track.codec_params.sample_rate.unwrap_or(0);
+            let channels = track
+                .codec_params
+                .channels
+                .map(|ch| ch.count())
+                .unwrap_or(0) as u32;
+
+            debug!(
+                "MP3音频规格 - 采样率: {}Hz, 声道数: {}",
+                sample_rate, channels
+            );
+
+            // 验证音频格式
+            if channels == 0 {
+                let error_msg = "无效的MP3文件：声道数为0".to_string();
+                error!("{}", error_msg);
+                return Err(anyhow::anyhow!(error_msg));
+            }
+
+            if sample_rate == 0 {
+                let error_msg = "无效的MP3文件：采样率为0".to_string();
+                error!("{}", error_msg);
+                return Err(anyhow::anyhow!(error_msg));
+            }
+
+            // 计算时长
+            let duration = if let Some(n_frames) = track.codec_params.n_frames {
+                n_frames as f32 / sample_rate as f32
+            } else {
+                // 如果无法直接获取帧数，尝试通过时间基准计算
+                if let Some(time_base) = track.codec_params.time_base {
+                    if let Some(n_frames) = track.codec_params.n_frames {
+                        let duration_ts = n_frames;
+                        time_base.calc_time(duration_ts).seconds as f32
+                            + time_base.calc_time(duration_ts).frac as f32
+                    } else {
+                        // 无法确定时长，返回错误
+                        let error_msg = "无法确定MP3文件时长".to_string();
+                        error!("{}", error_msg);
+                        return Err(anyhow::anyhow!(error_msg));
+                    }
+                } else {
+                    let error_msg = "MP3文件缺少时间基准信息".to_string();
+                    error!("{}", error_msg);
+                    return Err(anyhow::anyhow!(error_msg));
+                }
+            };
+
+            debug!("MP3音频信息计算完成 - 时长: {:.2}秒", duration);
+
+            Ok((duration, sample_rate))
+        }
+        _ => {
+            let error_msg = format!("不支持的音频格式: {}", extension);
+            error!("{}", error_msg);
+            Err(anyhow::anyhow!(error_msg))
+        }
+    }
+}
+
 /// 处理JSON格式的TTS请求（原有逻辑）
 async fn handle_tts_json(req: &mut Request, res: &mut Response) -> Result<(), StatusError> {
     let total_start = std::time::Instant::now();
@@ -437,8 +773,8 @@ async fn handle_tts_json(req: &mut Request, res: &mut Response) -> Result<(), St
     let parse_time = parse_start.elapsed();
 
     info!(
-        "🎯 收到TTS请求: text='{}', ref_audio_path='{:?}'",
-        tts_request.text, tts_request.ref_audio_path
+        "🎯 收到TTS请求: text='{}', voice_id='{:?}'",
+        tts_request.text, tts_request.voice_id
     );
     info!(
         "  ⏱️  请求解析耗时: {:.2}ms",
@@ -449,10 +785,55 @@ async fn handle_tts_json(req: &mut Request, res: &mut Response) -> Result<(), St
     let setup_start = std::time::Instant::now();
     let app_state = get_global_app_state();
 
+    // 处理音色ID参数
+    let (_use_voice_clone, voice_feature, prompt_text_from_voice) =
+        if let Some(voice_id) = &tts_request.voice_id {
+            if !voice_id.is_empty() {
+                // 使用音色ID加载预存的音色特征
+                match app_state.voice_manager.load_voice_feature(voice_id).await {
+                    Ok(voice_feature) => {
+                        info!(
+                            "🎭 使用音色ID: {}, 音色名称: {}",
+                            voice_id, voice_feature.name
+                        );
+                        // 使用音色特征中的tokens，不需要参考音频文件
+                        // 同时获取提示词，避免重复读取文件
+                        let prompt_text = voice_feature.prompt_text.clone();
+                        (true, Some(voice_feature), Some(prompt_text))
+                    }
+                    Err(e) => {
+                        error!("加载音色特征失败: {}", e);
+                        res.status_code(StatusCode::BAD_REQUEST);
+                        res.render(Json(ErrorResponse {
+                            success: false,
+                            error: format!("音色ID '{}' 不存在或加载失败: {}", voice_id, e),
+                        }));
+                        return Ok(());
+                    }
+                }
+            } else {
+                // voice_id为空，使用默认模式
+                (false, None, None)
+            }
+        } else {
+            // 没有提供voice_id，使用默认模式
+            (false, None, None)
+        };
+
+    // 确定使用的提示词：优先使用音色特征中的提示词，其次是请求中的提示词，最后是默认提示词
+    let final_prompt_text = if let Some(prompt_text) = prompt_text_from_voice {
+        prompt_text
+    } else {
+        tts_request.prompt_text.clone().unwrap_or_default()
+    };
+
+    // zero-shot模式只基于voice_id判断
+    let zero_shot_mode = tts_request.voice_id.is_some();
+
     let pipeline_args = LightweightTtsPipelineArgs {
         text: tts_request.text.clone(),
-        ref_audio_path: tts_request.ref_audio_path.clone().unwrap_or_default(),
-        zero_shot: tts_request.ref_audio_path.is_some(),
+        ref_audio_path: String::new(), // 不再支持ref_audio_path
+        zero_shot: zero_shot_mode,
         temperature: tts_request.temperature.unwrap_or(1.0),
         top_p: tts_request.top_p.unwrap_or(0.90),
         top_k: 100,
@@ -472,7 +853,10 @@ async fn handle_tts_json(req: &mut Request, res: &mut Response) -> Result<(), St
         },
         speed: 4.2, // 默认语速
         // 添加提示词
-        prompt_text: tts_request.prompt_text.unwrap_or_default(),
+        prompt_text: final_prompt_text,
+        // 如果有音色特征，传入tokens并转换为i64类型
+        voice_global_tokens: voice_feature.as_ref().map(|vf| vf.global_tokens.clone()),
+        voice_semantic_tokens: voice_feature.as_ref().map(|vf| vf.semantic_tokens.clone()),
         ..Default::default()
     };
     let setup_time = setup_start.elapsed();
@@ -586,19 +970,6 @@ async fn handle_tts_json(req: &mut Request, res: &mut Response) -> Result<(), St
     Ok(())
 }
 
-/// 获取服务器状态
-#[handler]
-async fn handle_status(res: &mut Response) {
-    let status = ServerStatus {
-        status: "running".to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime_seconds: 0, // 简化处理
-        total_requests: 0, // 简化处理
-    };
-
-    res.render(Json(status));
-}
-
 /// 提供Web UI界面
 #[handler]
 async fn handle_web_ui(_req: &mut Request, res: &mut Response) {
@@ -617,47 +988,277 @@ async fn handle_web_ui(_req: &mut Request, res: &mut Response) {
 /// 处理嵌入的静态文件
 #[handler]
 async fn handle_static_files(req: &mut Request, res: &mut Response) {
-    let path = req.param::<String>("**path").unwrap_or_default();
+    let path = req.param::<String>("path").unwrap_or_default();
 
-    match Assets::get(&path) {
-        Some(content) => {
-            // 根据文件扩展名设置Content-Type
-            let content_type = match path.split('.').next_back() {
-                Some("html") => "text/html",
-                Some("css") => "text/css",
-                Some("js") => "application/javascript",
-                Some("png") => "image/png",
-                Some("jpg") | Some("jpeg") => "image/jpeg",
-                Some("gif") => "image/gif",
-                Some("svg") => "image/svg+xml",
-                Some("ico") => "image/x-icon",
-                _ => "application/octet-stream",
-            };
+    // 处理根路径请求，返回index.html
+    let file_path = if path.is_empty() || path == "/" {
+        "index.html".to_string()
+    } else {
+        // 移除开头的斜杠（如果有的话）
+        path.trim_start_matches('/').to_string()
+    };
 
-            res.headers_mut()
-                .insert("content-type", content_type.parse().unwrap());
+    // 调试：打印请求信息
+    debug!(
+        "请求路径: {}, 参数path: {}, 文件路径: {}",
+        req.uri().path(),
+        path,
+        file_path
+    );
 
+    // 首先尝试直接查找文件
+    if let Some(content) = Assets::get(&file_path) {
+        debug!("找到文件: {}", file_path);
+        // 根据文件扩展名设置Content-Type
+        let content_type = match file_path.split('.').next_back() {
+            Some("html") => "text/html; charset=utf-8",
+            Some("css") => "text/css",
+            Some("js") => "application/javascript",
+            Some("json") => "application/json",
+            Some("png") => "image/png",
+            Some("jpg") | Some("jpeg") => "image/jpeg",
+            Some("gif") => "image/gif",
+            Some("svg") => "image/svg+xml",
+            Some("ico") => "image/x-icon",
+            _ => "application/octet-stream",
+        };
+        res.add_header("content-type", content_type, true).unwrap();
+        // 复制数据以避免生命周期问题
+        let data = content.data.to_vec();
+        res.write_body(data).unwrap();
+        debug!("成功返回文件: {}", file_path);
+        return;
+    }
+
+    // 如果找不到文件，且是根路径，返回index.html
+    if path.is_empty() || path == "/" {
+        if let Some(content) = Assets::get("index.html") {
+            res.add_header("content-type", "text/html; charset=utf-8", true)
+                .unwrap();
             // 复制数据以避免生命周期问题
             let data = content.data.to_vec();
             res.write_body(data).unwrap();
-        }
-        None => {
-            res.status_code(StatusCode::NOT_FOUND);
-            res.render(Text::Plain("File not found"));
+            debug!("返回默认index.html");
+            return;
         }
     }
+
+    // 文件未找到，返回404
+    res.status_code(StatusCode::NOT_FOUND);
+    res.render(Text::Plain("File not found"));
+    debug!("文件未找到: {}", file_path);
 }
 
-/// 健康检查
+/// 处理音色特征提取请求
 #[handler]
-async fn handle_health(_req: &mut Request, res: &mut Response) {
-    res.render(Json(serde_json::json!({
-        "status": "healthy",
-        "timestamp": std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-    })));
+async fn handle_voice_extract(req: &mut Request, res: &mut Response) -> Result<(), StatusError> {
+    // 检查是否是multipart请求（文件上传）
+    if !req
+        .content_type()
+        .map(|ct| ct.type_() == "multipart")
+        .unwrap_or(false)
+    {
+        let error_response = VoiceExtractResponse {
+            success: false,
+            message: "需要上传音频文件".to_string(),
+            voice_id: None,
+        };
+        res.render(Json(error_response));
+        return Ok(());
+    }
+
+    // multipart数据会自动解析，无需手动调用parse_form
+
+    // 提取参数
+    let voice_name: String = req.form("voice_name").await.unwrap_or_default();
+    let prompt_text: String = req.form("prompt_text").await.unwrap_or_default();
+    let _description: Option<String> = req.form("description").await;
+
+    if voice_name.is_empty() {
+        let error_response = VoiceExtractResponse {
+            success: false,
+            message: "音色名称不能为空".to_string(),
+            voice_id: None,
+        };
+        res.render(Json(error_response));
+        return Ok(());
+    }
+
+    if prompt_text.is_empty() {
+        let error_response = VoiceExtractResponse {
+            success: false,
+            message: "提示词不能为空".to_string(),
+            voice_id: None,
+        };
+        res.render(Json(error_response));
+        return Ok(());
+    }
+
+    // 获取上传的音频文件
+    let file = match req.file("audio_file").await {
+        Some(file) => file,
+        None => {
+            let error_response = VoiceExtractResponse {
+                success: false,
+                message: "未找到音频文件".to_string(),
+                voice_id: None,
+            };
+            res.render(Json(error_response));
+            return Ok(());
+        }
+    };
+
+    // 保存上传的文件到临时目录，保持原始扩展名
+    let original_filename = file.name().unwrap_or("audio");
+    let extension = std::path::Path::new(original_filename)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("wav"); // 默认为wav
+
+    let temp_dir = PathBuf::from("assets/raf/temp/upload_temp_files");
+    let temp_file_path = temp_dir.join(format!("{}.{}", Uuid::new_v4(), extension));
+
+    if let Err(e) = tokio::fs::copy(file.path(), &temp_file_path).await {
+        error!("保存临时文件失败: {}", e);
+        let error_response = VoiceExtractResponse {
+            success: false,
+            message: "保存临时文件失败".to_string(),
+            voice_id: None,
+        };
+        res.render(Json(error_response));
+        return Ok(());
+    }
+
+    // 获取应用状态
+    let app_state = get_global_app_state();
+
+    // 实际的音频特征提取逻辑
+    let (global_tokens, semantic_tokens, audio_duration, sample_rate) =
+        match extract_audio_features(temp_file_path.to_str().unwrap()).await {
+            Ok(features) => features,
+            Err(e) => {
+                error!("音频特征提取失败: {}", e);
+                // 清理临时文件
+                let _ = fs::remove_file(&temp_file_path).await;
+
+                let error_response = VoiceExtractResponse {
+                    success: false,
+                    message: format!("音频特征提取失败: {}", e),
+                    voice_id: None,
+                };
+                res.render(Json(error_response));
+                return Ok(());
+            }
+        };
+
+    // 使用音色特征管理器提取并保存音色特征
+    match app_state
+        .voice_manager
+        .save_voice_feature(
+            voice_name,
+            prompt_text,
+            global_tokens,
+            semantic_tokens,
+            audio_duration,
+            sample_rate,
+        )
+        .await
+    {
+        Ok(voice_id) => {
+            // 清理临时文件
+            let _ = fs::remove_file(&temp_file_path).await;
+
+            let response = VoiceExtractResponse {
+                success: true,
+                message: "音色特征提取成功".to_string(),
+                voice_id: Some(voice_id),
+            };
+            res.render(Json(response));
+        }
+        Err(e) => {
+            error!("音色特征提取失败: {}", e);
+            // 清理临时文件
+            let _ = fs::remove_file(&temp_file_path).await;
+
+            let error_response = VoiceExtractResponse {
+                success: false,
+                message: format!("音色特征提取失败: {}", e),
+                voice_id: None,
+            };
+            res.render(Json(error_response));
+        }
+    }
+
+    Ok(())
+}
+
+/// 处理音色列表请求
+#[handler]
+async fn handle_voice_list(_req: &mut Request, res: &mut Response) -> Result<(), StatusError> {
+    let app_state = get_global_app_state();
+
+    match app_state.voice_manager.list_voices().await {
+        Ok(voices) => {
+            let response = VoiceListResponse {
+                success: true,
+                voices,
+            };
+            res.render(Json(response));
+        }
+        Err(e) => {
+            error!("获取音色列表失败: {}", e);
+            let error_response = VoiceListResponse {
+                success: false,
+                voices: vec![],
+            };
+            res.render(Json(error_response));
+        }
+    }
+
+    Ok(())
+}
+
+/// 处理音色删除请求
+#[handler]
+async fn handle_voice_delete(req: &mut Request, res: &mut Response) -> Result<(), StatusError> {
+    let delete_request: VoiceDeleteRequest = match req.parse_json().await {
+        Ok(req) => req,
+        Err(e) => {
+            error!("解析删除请求失败: {}", e);
+            let error_response = VoiceDeleteResponse {
+                success: false,
+                message: "请求格式错误".to_string(),
+            };
+            res.render(Json(error_response));
+            return Ok(());
+        }
+    };
+
+    let app_state = get_global_app_state();
+
+    match app_state
+        .voice_manager
+        .delete_voice(&delete_request.voice_id)
+        .await
+    {
+        Ok(()) => {
+            let response = VoiceDeleteResponse {
+                success: true,
+                message: "音色删除成功".to_string(),
+            };
+            res.render(Json(response));
+        }
+        Err(e) => {
+            error!("删除音色失败: {}", e);
+            let error_response = VoiceDeleteResponse {
+                success: false,
+                message: format!("删除音色失败: {}", e),
+            };
+            res.render(Json(error_response));
+        }
+    }
+
+    Ok(())
 }
 
 /// CORS中间件
@@ -764,8 +1365,8 @@ async fn download_models_from_hf() -> Result<()> {
     let files_to_download = vec![
         "rwkvtts-Int8_22.prefab",
         "tokenizer.json",
-        "BiCodecTokenize_static_qdq.onnx",
-        "wav2vec2-large-xlsr-53_static_qdq.onnx",
+        "BiCodecTokenize.onnx",
+        "wav2vec2-large-xlsr-53.onnx",
         "BiCodecDetokenize_static_qdq.onnx",
     ];
 
@@ -938,7 +1539,7 @@ async fn main() -> Result<()> {
         .get_matches();
 
     // 初始化日志，过滤掉ort和web-rwkv的调试输出
-    let filter = EnvFilter::new("info")
+    let filter = EnvFilter::new("debug")
         .add_directive("ort=warn".parse().unwrap())
         .add_directive("web_rwkv=warn".parse().unwrap())
         .add_directive("naga=warn".parse().unwrap())
@@ -976,9 +1577,9 @@ async fn main() -> Result<()> {
     let model_missing = !Path::new(model_path).exists();
     let vocab_missing = !Path::new(vocab_path).exists();
     let onnx_files = [
-        "assets/model/BiCodecTokenize_static_qdq.onnx",
-        "assets/model/wav2vec2-large-xlsr-53_static_qdq.onnx",
-        "assets/model/BiCodecDetokenize_static_qdq.onnx",
+        "assets/model/BiCodecTokenize.onnx",
+        "assets/model/wav2vec2-large-xlsr-53.onnx",
+        "assets/model/BiCodecDetokenize.onnx",
     ];
     let onnx_missing = onnx_files.iter().any(|path| !Path::new(path).exists());
 
@@ -1032,11 +1633,11 @@ async fn main() -> Result<()> {
         .parse()
         .expect("无效的批处理大小");
 
-    info!("初始化ONNX会话池（使用量化模型）...");
+    info!("初始化ONNX会话池（使用原始BiCodec模型）...");
     rwkv_tts_rs::onnx_session_pool::init_global_onnx_manager(
-        "assets/model/BiCodecTokenize_static_qdq.onnx",
-        "assets/model/wav2vec2-large-xlsr-53_static_qdq.onnx",
-        "assets/model/BiCodecDetokenize_static_qdq.onnx",
+        "assets/model/BiCodecTokenize.onnx",
+        "assets/model/wav2vec2-large-xlsr-53.onnx",
+        "assets/model/BiCodecDetokenize.onnx",
         Some(4),
     )
     .map_err(|e| anyhow::anyhow!("初始化ONNX管理器失败: {}", e))?;
@@ -1064,7 +1665,7 @@ async fn main() -> Result<()> {
     };
 
     // 创建动态批处理配置
-    let dynamic_batch_config = rwkv_tts_rs::dynamic_batch_manager::DynamicBatchConfig {
+    let dynamic_batch_config = rwkv_tts_rs::batch_types::DynamicBatchConfig {
         min_batch_size: 1,
         max_batch_size: batch_size,              // 可配置的批处理大小
         collect_timeout_ms: batch_timeout,       // 可配置的超时时间
@@ -1088,11 +1689,15 @@ async fn main() -> Result<()> {
     // 创建轻量级TTS流水线
     let tts_pipeline = Arc::new(LightweightTtsPipeline::new());
 
+    // 初始化音色特征管理器
+    let voice_manager = Arc::new(VoiceFeatureManager::new("assets/raf")?);
+
     let app_state = AppState {
         start_time: std::time::Instant::now(),
         model_path: model_path.to_string(),
         vocab_path: vocab_path.to_string(),
         tts_pipeline,
+        voice_manager,
     };
 
     // 初始化全局应用状态
@@ -1101,11 +1706,11 @@ async fn main() -> Result<()> {
     // 创建路由
     let router = Router::new()
         .hoop(cors_handler)
-        .push(Router::with_path("/").get(handle_web_ui))
-        .push(Router::with_path("/api/status").get(handle_status))
         .push(Router::with_path("/api/tts").post(handle_tts))
-        .push(Router::with_path("/api/health").get(handle_health))
-        .push(Router::with_path("/static/<**path>").get(handle_static_files));
+        .push(Router::with_path("/api/voice-clone/extract").post(handle_voice_extract))
+        .push(Router::with_path("/api/voice-clone/list").get(handle_voice_list))
+        .push(Router::with_path("/api/voice-clone/delete").delete(handle_voice_delete))
+        .push(Router::with_path("{*path}").get(handle_static_files));
 
     // 注意：现在静态文件已嵌入到二进制文件中，不再依赖外部static目录
 

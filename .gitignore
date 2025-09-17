@@ -20,7 +20,11 @@
 /onnx-quantizer/
 /onnxruntime-win-x64-1.22.1/
 /node_modules/
-/ai00_server/
+/ai00_server/ 
+
+/assets/model/
+/assets/back/
+
 
 # 操作系统生成的文件
 .DS_Store

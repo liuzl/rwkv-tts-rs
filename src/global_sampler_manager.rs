@@ -24,8 +24,8 @@ impl GlobalSamplerManager {
         // 创建默认采样参数
         let _sampler_args = SamplerArgs::default();
 
-        // 使用默认量化配置创建采样器
-        let quant_config = Some(RwkvSampler::default_quant_config());
+        // 不使用量化配置创建采样器
+        let quant_config = None;
         let sampler = RwkvSampler::new(model_path, vocab_path, quant_config).await?;
 
         Ok(Self {

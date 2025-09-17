@@ -13,19 +13,21 @@ clap = "4.0"
 ndarray = "0.15.6"
 ort = { version = "2.0.0-rc.10", features = ["load-dynamic"] }
 hound = "3.5"
+symphonia = { version = "0.5", features = ["mp3", "wav"] }
+mp3lame-encoder = "0.1.5"
 memmap2 = "0.9"
 half = "2.4"
 wgpu = "26.0"
 safetensors = "0.6"
-web-rwkv = "0.10.15"
-serde_json = "1.0"
+web-rwkv = "0.10.16"
+serde_json = "1.0.144"
 cbor4ii = { version = "1.0.0", features = ["serde1"] }
 rand = "0.8"
 regex = "1.0"
 sha2 = "0.10"
 # Salvo web framework dependencies
 salvo = { version = "0.84.0", features = ["serve-static", "cors", "compression"] }
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0.221", features = ["derive"] }
 base64 = "0.22"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -39,9 +41,18 @@ hf-hub = "0.4.3"
 tokio-util = { version = "0.7", features = ["io"] }
 # Embed static files into binary
 rust-embed = "8.0"
+# Binary serialization for voice features
+bincode = { version = "2.0.1", features = ["serde"] }
+# UUID generation for voice IDs
+uuid = { version = "1.0", features = ["v4"] }
+# Date and time handling
+chrono = { version = "0.4", features = ["serde"] }
 
  
 
 [[bin]]
 name = "rwkvtts_server"
 path = "bin/server.rs"
+
+[dev-dependencies]
+tempfile = "3.22.0"

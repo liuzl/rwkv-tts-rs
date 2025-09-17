@@ -3,7 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RWKV TTS - 语音合成服务</title>
+    <title>RWKV TTS 语音合成服务</title>
+    <script type="module">
+        import WaveSurfer from '/js/wavesurfer.esm.js';
+        window.WaveSurfer = WaveSurfer;
+    </script>
     <style>
         * {
             margin: 0;
@@ -11,92 +15,155 @@
             box-sizing: border-box;
         }
 
+
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea, #764ba2, #667eea, #9b59b6, #667eea);
+            background-size: 400% 400%;
+            animation: gradientShift 8s ease-in-out infinite;
             min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
             padding: 20px;
         }
 
-        .container {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
-            border-radius: 20px;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-            padding: 40px;
-            width: 100%;
-            max-width: 1000px;
-            animation: fadeInUp 0.6s ease-out;
+        @keyframes gradientShift {
+            0% {
+                background-position: 0% 50%;
+            }
+            25% {
+                background-position: 100% 50%;
+            }
+            50% {
+                background-position: 100% 100%;
+            }
+            75% {
+                background-position: 0% 100%;
+            }
+            100% {
+                background-position: 0% 50%;
+            }
         }
 
-        .tab-navigation {
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            opacity: 0.85;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+        }
+
+        .header-content {
             display: flex;
-            margin-bottom: 30px;
-            border-bottom: 2px solid #e2e8f0;
+            justify-content: space-between;
+            align-items: center;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header-left {
+            text-align: left;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            font-weight: 300;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .lang-toggle {
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+        }
+
+        .lang-toggle:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-2px);
+        }
+
+        .github-link {
+            color: white;
+            text-decoration: none;
+            padding: 8px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+        }
+
+        .github-link:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-2px);
+        }
+
+        .tabs {
+            display: flex;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e9ecef;
         }
 
         .tab-button {
+            flex: 1;
+            padding: 15px 20px;
             background: none;
             border: none;
-            padding: 15px 30px;
-            font-size: 1.1rem;
-            font-weight: 600;
-            color: #718096;
             cursor: pointer;
-            border-bottom: 3px solid transparent;
+            font-size: 16px;
+            font-weight: 500;
+            color: #6c757d;
             transition: all 0.3s ease;
+            border-bottom: 3px solid transparent;
+        }
+
+        .tab-button:hover {
+            background: #e9ecef;
+            color: #495057;
         }
 
         .tab-button.active {
             color: #667eea;
             border-bottom-color: #667eea;
-        }
-
-        .tab-button:hover {
-            color: #667eea;
+            background: white;
         }
 
         .tab-content {
             display: none;
+            padding: 30px;
         }
 
         .tab-content.active {
             display: block;
-        }
-
-        @keyframes fadeInUp {
-            from {
-                opacity: 0;
-                transform: translateY(30px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        .header {
-            text-align: center;
-            margin-bottom: 40px;
-        }
-
-        .header h1 {
-            color: #2d3748;
-            font-size: 2.5rem;
-            font-weight: 700;
-            margin-bottom: 10px;
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        .header p {
-            color: #718096;
-            font-size: 1.1rem;
         }
 
         .form-group {
@@ -106,67 +173,89 @@
         .form-group label {
             display: block;
             margin-bottom: 8px;
-            color: #2d3748;
             font-weight: 600;
-            font-size: 0.95rem;
+            color: #333;
         }
 
-        .form-control {
+        .form-group textarea,
+        .form-group input,
+        .form-group select {
             width: 100%;
-            padding: 12px 16px;
-            border: 2px solid #e2e8f0;
-            border-radius: 12px;
-            font-size: 1rem;
-            transition: all 0.3s ease;
-            background: #f7fafc;
+            padding: 12px 15px;
+            border: 2px solid #e9ecef;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: border-color 0.3s ease;
         }
 
-        .form-control:focus {
+        .form-group textarea:focus,
+        .form-group input:focus,
+        .form-group select:focus {
             outline: none;
             border-color: #667eea;
-            background: #fff;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
         }
 
-        textarea.form-control {
+        .form-group textarea {
             resize: vertical;
             min-height: 120px;
-            font-family: inherit;
+        }
+
+        .advanced-section {
+            margin-top: 30px;
+        }
+
+        .advanced-toggle {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            padding: 12px 20px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 500;
+            color: #495057;
+            transition: all 0.3s ease;
+            display: block;
+            width: 100%;
+            text-align: left;
+        }
+
+        .advanced-toggle:hover {
+            background: #e9ecef;
+        }
+
+        .advanced-content {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .advanced-content.hidden {
+            display: none;
         }
 
         .form-row {
             display: grid;
-            grid-template-columns: 1fr 1fr;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 20px;
         }
 
-        @media (max-width: 768px) {
-            .form-row {
-                grid-template-columns: 1fr;
-            }
-        }
-
         .btn {
-            background: linear-gradient(135deg, #667eea, #764ba2);
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             border: none;
             padding: 15px 30px;
-            border-radius: 12px;
-            font-size: 1.1rem;
+            border-radius: 10px;
+            font-size: 18px;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.3s ease;
             width: 100%;
-            margin-top: 10px;
+            margin-top: 20px;
         }
 
         .btn:hover {
             transform: translateY(-2px);
-            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
-        }
-
-        .btn:active {
-            transform: translateY(0);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
         }
 
         .btn:disabled {
@@ -178,119 +267,29 @@
         .loading {
             display: none;
             text-align: center;
-            margin: 20px 0;
-        }
-
-        .spinner {
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #667eea;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 10px;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        .audio-container {
-            background: #f8f9fa;
-            border: 1px solid #e9ecef;
-            border-radius: 8px;
-            padding: 10px;
-            margin-top: 10px;
-        }
-
-        .audio-container audio {
-            width: 100%;
-            height: 50px;
-            margin-bottom: 8px;
-        }
-
-        .audio-download {
-            display: inline-block;
+            padding: 20px;
             color: #667eea;
-            text-decoration: none;
-            font-size: 12px;
-            padding: 4px 8px;
-            border: 1px solid #667eea;
-            border-radius: 4px;
-            transition: all 0.2s ease;
-        }
-
-        .audio-download:hover {
-            background: #667eea;
-            color: white;
-        }
-
-        .result-item {
-            background: #fff;
-            border: 1px solid #e0e0e0;
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 15px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-
-        .result-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 10px;
-        }
-
-        .result-info {
-            font-weight: bold;
-            color: #2d3748;
-        }
-
-        .summary-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-bottom: 20px;
-        }
-
-        .summary-item {
-            background: #f7fafc;
-            padding: 15px;
-            border-radius: 10px;
-            text-align: center;
-            border: 1px solid #e2e8f0;
-        }
-
-        .summary-label {
-            font-size: 0.9rem;
-            color: #718096;
-            margin-bottom: 5px;
-        }
-
-        .summary-value {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: #2d3748;
+            font-weight: 500;
         }
 
         .result {
+            display: none;
             margin-top: 30px;
             padding: 20px;
-            background: #f7fafc;
-            border-radius: 12px;
-            border-left: 4px solid #667eea;
-            display: none;
+            border-radius: 10px;
+            font-weight: 500;
         }
 
         .result.success {
-            background: #f0fff4;
-            border-left-color: #38a169;
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
         }
 
         .result.error {
-            background: #fed7d7;
-            border-left-color: #e53e3e;
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
         }
 
         .audio-player {
@@ -299,476 +298,177 @@
 
         .audio-player audio {
             width: 100%;
-            height: 50px;
-            border-radius: 8px;
-            min-height: 50px;
+            margin-bottom: 10px;
         }
 
-        .status-info {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-top: 20px;
+        .status-section {
+            background: #f8f9fa;
             padding: 20px;
-            background: #edf2f7;
-            border-radius: 12px;
-        }
-
-        .status-item {
-            text-align: center;
-        }
-
-        .status-item .label {
-            font-size: 0.85rem;
-            color: #718096;
-            margin-bottom: 5px;
-        }
-
-        .status-item .value {
-            font-size: 1.2rem;
-            font-weight: 600;
-            color: #2d3748;
-        }
-
-        .advanced-options {
-            margin-top: 20px;
-            padding: 20px;
-            background: #f7fafc;
-            border-radius: 12px;
-            border: 1px solid #e2e8f0;
-        }
-
-        .advanced-toggle {
-            background: none;
-            border: none;
-            color: #667eea;
-            font-weight: 600;
-            cursor: pointer;
-            margin-bottom: 15px;
-            font-size: 1rem;
-        }
-
-        .advanced-content {
-            display: none;
-        }
-
-        .advanced-content.show {
-            display: block;
-        }
-
-        .checkbox-group {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .checkbox-group input[type="checkbox"] {
-            width: 18px;
-            height: 18px;
-            accent-color: #667eea;
-        }
-
-        /* 并发测试样式 */
-        .concurrent-test-container {
-            max-width: 100%;
-        }
-
-        .test-controls {
-            display: flex;
-            gap: 15px;
-            margin: 25px 0;
-        }
-
-        .btn-secondary {
-            background: linear-gradient(135deg, #718096, #4a5568);
-        }
-
-        .btn-secondary:hover {
-            background: linear-gradient(135deg, #4a5568, #2d3748);
-        }
-
-        .concurrent-status {
-            margin: 30px 0;
-            padding: 25px;
-            background: #f7fafc;
-            border-radius: 12px;
-            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            margin-bottom: 20px;
         }
 
         .status-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 15px;
-            margin-bottom: 25px;
-        }
-
-        .status-card {
-            background: white;
-            padding: 20px;
-            border-radius: 10px;
-            text-align: center;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-            border-left: 4px solid #667eea;
-        }
-
-        .status-card.success {
-            border-left-color: #38a169;
-        }
-
-        .status-card.error {
-            border-left-color: #e53e3e;
-        }
-
-        .status-label {
-            font-size: 0.9rem;
-            color: #718096;
-            margin-bottom: 8px;
-        }
-
-        .status-value {
-            font-size: 2rem;
-            font-weight: 700;
-            color: #2d3748;
-        }
-
-        .progress-container {
-            position: relative;
-            margin-bottom: 20px;
-        }
-
-        .progress-bar {
-            width: 100%;
-            height: 20px;
-            background: #e2e8f0;
-            border-radius: 10px;
-            overflow: hidden;
-        }
-
-        .progress-fill {
-            height: 100%;
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            width: 0%;
-            transition: width 0.3s ease;
-        }
-
-        .progress-text {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            font-weight: 600;
-            color: #2d3748;
-            font-size: 0.9rem;
-        }
-
-        .test-results {
-            margin-top: 30px;
-            padding: 25px;
-            background: #f7fafc;
-            border-radius: 12px;
-            border: 1px solid #e2e8f0;
-        }
-
-        .test-results h3 {
-            color: #2d3748;
-            margin-bottom: 20px;
-            font-size: 1.5rem;
-        }
-
-        .results-summary {
-            display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 15px;
-            margin-bottom: 25px;
         }
 
-        .summary-item {
+        .status-item {
             background: white;
             padding: 15px;
             border-radius: 8px;
             text-align: center;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
         }
 
-        .summary-label {
-            font-size: 0.9rem;
-            color: #718096;
+        .status-item .label {
+            font-size: 14px;
+            color: #6c757d;
             margin-bottom: 5px;
         }
 
-        .summary-value {
-            font-size: 1.3rem;
+        .status-item .value {
+            font-size: 18px;
             font-weight: 600;
-            color: #2d3748;
+            color: #333;
         }
 
-        .results-details {
-            max-height: 300px;
-            overflow-y: auto;
-            background: white;
+        .voice-upload {
+            border: 2px dashed #e9ecef;
+            border-radius: 10px;
+            padding: 30px;
+            text-align: center;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .voice-upload:hover {
+            border-color: #667eea;
+            background: #f8f9ff;
+        }
+
+        .voice-upload.dragover {
+            border-color: #667eea;
+            background: #f0f4ff;
+        }
+
+        .upload-icon {
+            font-size: 48px;
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+
+        .upload-text {
+            font-size: 16px;
+            color: #6c757d;
+            margin-bottom: 10px;
+        }
+
+        .upload-hint {
+            font-size: 14px;
+            color: #adb5bd;
+        }
+
+        .file-info {
+            display: none;
+            background: #e7f3ff;
+            border: 1px solid #b3d9ff;
             border-radius: 8px;
             padding: 15px;
+            margin-top: 15px;
         }
 
-        .result-item {
-            padding: 10px;
-            border-bottom: 1px solid #e2e8f0;
+        .file-info.show {
+            display: block;
+        }
+
+        .voice-list {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            background: white;
+        }
+
+        .voice-item {
+            padding: 12px 15px;
+            border-bottom: 1px solid #f1f3f4;
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
 
-        .result-item:last-child {
+        .voice-item:last-child {
             border-bottom: none;
         }
 
-        .result-status {
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 0.8rem;
-            font-weight: 600;
+        .voice-item:hover {
+            background: #f8f9fa;
         }
 
-        .result-status.success {
-            background: #c6f6d5;
-            color: #22543d;
+        .voice-name {
+            font-weight: 500;
+            color: #333;
         }
 
-        .result-status.error {
-            background: #fed7d7;
-            color: #742a2a;
+        .voice-actions {
+            display: flex;
+            gap: 10px;
         }
 
-        /* 响应式设计 */
+        .btn-small {
+            padding: 5px 10px;
+            font-size: 12px;
+            border-radius: 5px;
+            border: none;
+            cursor: pointer;
+            font-weight: 500;
+        }
+
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+        }
+
         @media (max-width: 768px) {
             .container {
                 margin: 10px;
-                padding: 15px;
+                border-radius: 15px;
             }
 
-            .tab-navigation {
+            .header {
+                padding: 20px;
+            }
+
+            .header-content {
                 flex-direction: column;
-                gap: 10px;
-            }
-
-            .tab-button {
-                width: 100%;
+                gap: 15px;
                 text-align: center;
             }
 
-            .form-group {
-                margin-bottom: 15px;
+            .header-left {
+                text-align: center;
             }
 
-            .test-controls {
-                flex-direction: column;
-                gap: 10px;
+            .header h1 {
+                font-size: 2em;
             }
 
-            .test-controls button {
-                width: 100%;
+            .header-right {
+                justify-content: center;
             }
 
-            .status-grid {
+            .tab-content {
+                padding: 20px;
+            }
+
+            .form-row {
                 grid-template-columns: 1fr;
-                gap: 10px;
-            }
-
-            .results-summary {
-                grid-template-columns: 1fr;
-                gap: 10px;
-            }
-
-            .status-value {
-                font-size: 1.5rem;
-            }
-
-            .summary-value {
-                font-size: 1.1rem;
-            }
-
-            .result-item {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 5px;
-            }
-        }
-
-        @media (max-width: 480px) {
-            .container {
-                margin: 5px;
-                padding: 10px;
-            }
-
-            h1 {
-                font-size: 1.8rem;
-            }
-
-            .form-group label {
-                font-size: 0.9rem;
-            }
-
-            .form-group input,
-            .form-group select,
-            .form-group textarea {
-                font-size: 14px;
-            }
-
-            .status-card {
-                padding: 15px;
-            }
-
-            .test-results h3 {
-                font-size: 1.2rem;
-            }
-
-            .progress-text {
-                font-size: 0.8rem;
-            }
-        }
-
-        /* API Documentation Styles */
-        .api-documentation {
-            max-width: 100%;
-            padding: 20px;
-        }
-
-        .api-documentation h2 {
-            color: #2c3e50;
-            border-bottom: 2px solid #3498db;
-            padding-bottom: 10px;
-            margin-bottom: 30px;
-        }
-
-        .api-section {
-            margin-bottom: 40px;
-            background: white;
-            border-radius: 8px;
-            padding: 25px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-
-        .api-section h3 {
-            color: #34495e;
-            margin-bottom: 15px;
-            font-size: 1.3em;
-        }
-
-        .api-section h4 {
-            color: #7f8c8d;
-            margin: 20px 0 10px 0;
-            font-size: 1.1em;
-        }
-
-        .code-block {
-            background: #2c3e50;
-            color: #ecf0f1;
-            padding: 15px;
-            border-radius: 6px;
-            margin: 15px 0;
-            overflow-x: auto;
-            font-family: 'Courier New', monospace;
-            font-size: 14px;
-            line-height: 1.4;
-        }
-
-        .code-block code {
-            background: none;
-            color: inherit;
-            padding: 0;
-            font-size: inherit;
-        }
-
-        .code-block pre {
-            margin: 0;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-        }
-
-        .param-table {
-            border: 1px solid #ddd;
-            border-radius: 6px;
-            overflow: hidden;
-            margin: 15px 0;
-        }
-
-        .param-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr 1fr 2fr;
-            border-bottom: 1px solid #eee;
-        }
-
-        .param-row:last-child {
-            border-bottom: none;
-        }
-
-        .param-row.header {
-            background: #3498db;
-            color: white;
-            font-weight: bold;
-        }
-
-        .param-row > div {
-            padding: 12px 15px;
-            border-right: 1px solid #eee;
-        }
-
-        .param-row.header > div {
-            border-right: 1px solid rgba(255,255,255,0.3);
-        }
-
-        .param-row > div:last-child {
-            border-right: none;
-        }
-
-        .param-name {
-            font-family: 'Courier New', monospace;
-            font-weight: bold;
-        }
-
-        .param-type {
-            color: #e74c3c;
-            font-style: italic;
-        }
-
-        .param-required {
-            text-align: center;
-        }
-
-        .note-list {
-            background: #f8f9fa;
-            border-left: 4px solid #3498db;
-            padding: 20px;
-            margin: 15px 0;
-            border-radius: 0 6px 6px 0;
-        }
-
-        .note-list li {
-            margin-bottom: 8px;
-            line-height: 1.5;
-        }
-
-        @media (max-width: 768px) {
-            .param-row {
-                grid-template-columns: 1fr;
-                gap: 0;
-            }
-            
-            .param-row > div {
-                border-right: none;
-                border-bottom: 1px solid #eee;
-            }
-            
-            .param-row > div:last-child {
-                border-bottom: none;
-            }
-            
-            .api-section {
-                padding: 15px;
-            }
-            
-            .code-block {
-                font-size: 12px;
-                padding: 10px;
             }
         }
     </style>
@@ -776,864 +476,361 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🎤 RWKV TTS</h1>
-            <p>高质量神经网络语音合成服务</p>
+            <div class="header-content">
+                <div class="header-left">
+                    <h1 data-i18n="title">🎵 RWKV TTS</h1>
+                    <p data-i18n="subtitle">基于 RWKV 的高质量语音合成服务</p>
+                </div>
+                <div class="header-right">
+                    <button id="langToggle" class="lang-toggle" onclick="toggleLanguage()">
+                        <span id="langIcon">🌐</span>
+                        <span id="langText" data-i18n="lang-switch">中文</span>
+                    </button>
+                    <a href="https://github.com/" target="_blank" class="github-link" title="GitHub">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                        </svg>
+                    </a>
+                </div>
+            </div>
         </div>
 
-        <div class="tab-navigation">
-            <button class="tab-button active" onclick="switchTab('singleTab')">🎵 单次测试</button>
-            <button class="tab-button" onclick="switchTab('concurrentTab')">⚡ 并发测试</button>
-            <button class="tab-button" onclick="switchTab('apiTab')">📖 API使用说明</button>
+        <div class="tabs">
+            <button class="tab-button active" data-tab="tts" data-i18n="tab-tts">🎵 语音生成</button>
+            <button class="tab-button" data-tab="clone" data-i18n="tab-clone">🎭 声音克隆</button>
+            <button class="tab-button" data-tab="api" data-i18n="tab-api">📖 API说明</button>
         </div>
 
-        <div id="singleTab" class="tab-content active">
+        <!-- 语音生成标签页 -->
+        <div id="tts" class="tab-content active">
             <form id="ttsForm">
-            <div class="form-group">
-                <label for="text">输入文本 *</label>
-                <textarea 
-                    id="text" 
-                    name="text" 
-                    class="form-control" 
-                    placeholder="请输入要转换为语音的文本内容..."
-                    required
-                ></textarea>
-            </div>
-
-            <div class="advanced-options">
-                <button type="button" class="advanced-toggle">
-                    ⚙️ 高级选项
-                </button>
-                <div class="advanced-content" id="advancedContent">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="temperature">温度 (0.1-2.0)</label>
-                            <input 
-                                type="number" 
-                                id="temperature" 
-                                name="temperature" 
-                                class="form-control" 
-                                min="0.1" 
-                                max="2.0" 
-                                step="0.1" 
-                                value="1.0"
-                            >
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="topP">Top-P (0.1-1.0)</label>
-                            <input 
-                                type="number" 
-                                id="topP" 
-                                name="topP" 
-                                class="form-control" 
-                                min="0.1" 
-                                max="1.0" 
-                                step="0.1" 
-                                value="0.90"
-                            >
-                        </div>
-                        <div class="form-group">
-                            <label for="speed">语速</label>
-                            <input 
-                                type="number" 
-                                id="speed" 
-                                name="speed" 
-                                class="form-control" 
-                                min="0.5" 
-                                max="2.0" 
-                                step="0.1" 
-                                value="1.0"
-                            >
-                        </div>
-                        <div class="form-group">
-                            <label for="seed">随机种子 (seed)</label>
-                            <input 
-                                type="number" 
-                                id="seed" 
-                                name="seed" 
-                                class="form-control" 
-                                placeholder="可选，相同 seed 可复现结果"
-                            >
-                        </div>
-                    </div>
-                    <!-- 添加基于Python项目的高级选项 -->
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="age">年龄</label>
-                            <select id="age" name="age" class="form-control">
-                                <option value="child">儿童</option>
-                                <option value="teenager">青少年</option>
-                                <option value="youth-adult" selected>青年/成年</option>
-                                <option value="middle-aged">中年</option>
-                                <option value="elderly">老年</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="gender">性别</label>
-                            <select id="gender" name="gender" class="form-control">
-                                <option value="female">女性</option>
-                                <option value="male" selected>男性</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="emotion">情感</label>
-                            <select id="emotion" name="emotion" class="form-control">
-                                <option value="NEUTRAL" selected>中性</option>
-                                <option value="ANGRY">愤怒</option>
-                                <option value="HAPPY">快乐</option>
-                                <option value="SAD">悲伤</option>
-                                <option value="FEARFUL">恐惧</option>
-                                <option value="DISGUSTED">厌恶</option>
-                                <option value="SURPRISED">惊讶</option>
-                                <option value="SARCASTIC">讽刺</option>
-                                <option value="EXCITED">兴奋</option>
-                                <option value="SLEEPY">困倦</option>
-                                <option value="CONFUSED">困惑</option>
-                                <option value="EMPHASIS">强调</option>
-                                <option value="LAUGHING">笑</option>
-                                <option value="SINGING">唱歌</option>
-                                <option value="WORRIED">担心</option>
-                                <option value="WHISPER">耳语</option>
-                                <option value="ANXIOUS">焦虑</option>
-                                <option value="NO-AGREEMENT">不同意</option>
-                                <option value="APOLOGETIC">道歉</option>
-                                <option value="CONCERNED">关心</option>
-                                <option value="ENUNCIATED">清晰</option>
-                                <option value="ASSERTIVE">自信</option>
-                                <option value="ENCOURAGING">鼓励</option>
-                                <option value="CONTEMPT">蔑视</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="pitch">音调</label>
-                            <select id="pitch" name="pitch" class="form-control">
-                                <option value="low_pitch">低音调</option>
-                                <option value="medium_pitch" selected>中音调</option>
-                                <option value="high_pitch">高音调</option>
-                                <option value="very_high_pitch">极高音调</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <div class="checkbox-group">
-                            <input type="checkbox" id="zeroShot" name="zeroShot">
-                            <label for="zeroShot">启用Zero-shot模式</label>
-                        </div>
-                    </div>
-                    <!-- Zero-shot模式下的选项，只有在启用Zero-shot时才显示 -->
-                    <div class="form-row" id="zeroShotOptions" style="display: none;">
-                        <div class="form-group">
-                            <label for="refAudioFile">参考音频文件</label>
-                            <input 
-                                type="file" 
-                                id="refAudioFile" 
-                                name="refAudioFile" 
-                                class="form-control"
-                                accept=".wav,.mp3,.flac,.m4a"
-                            >
-                            <small>支持 WAV, MP3, FLAC, M4A 格式</small>
-                        </div>
-                        <div class="form-group">
-                            <label for="promptText">提示词</label>
-                            <textarea 
-                                id="promptText" 
-                                name="promptText" 
-                                class="form-control" 
-                                placeholder="请输入提示词，描述参考音频的说话风格、情感等..."
-                                rows="3"
-                            ></textarea>
-                        </div>
-                    </div>
-
-                </div>
-            </div>
-
-            <button type="submit" class="btn" id="generateBtn">
-                🎵 生成语音
-            </button>
-        </form>
-
-        <div class="loading" id="loading">
-            <div class="spinner"></div>
-            <p>正在生成语音，请稍候...</p>
-        </div>
-
-        <div class="result" id="result">
-            <div id="resultMessage"></div>
-            <div class="audio-player" id="audioPlayer"></div>
-            <div class="status-info" id="statusInfo"></div>
-        </div>
-        </div>
-
-        <div id="concurrentTab" class="tab-content">
-            <div class="concurrent-test-container">
                 <div class="form-group">
-                    <label for="concurrentText">测试文本 *</label>
-                    <textarea 
-                        id="concurrentText" 
-                        class="form-control" 
-                        placeholder="请输入要进行并发测试的文本内容..."
-                        required
-                    >你好，这是一个并发测试的示例文本。</textarea>
+                    <label for="text" data-i18n="input-text">输入文本</label>
+                    <small style="color: #999; font-size: 12px; margin-left: 8px;" data-i18n="ipa-coming-soon">IPA 即将支持</small>
+                    <textarea id="text" name="text" placeholder="请输入要转换为语音的文本..." data-i18n="text-placeholder" required></textarea>
                 </div>
 
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="concurrentCount">并发数量 (1-50)</label>
-                        <input 
-                            type="number" 
-                            id="concurrentCount" 
-                            class="form-control" 
-                            min="1" 
-                            max="50" 
-                            value="10"
-                            required
-                        >
-                    </div>
-                    <div class="form-group">
-                        <label for="testTimeout">超时时间 (秒)</label>
-                        <input 
-                            type="number" 
-                            id="testTimeout" 
-                            class="form-control" 
-                            min="5" 
-                            max="300" 
-                            value="30"
-                        >
+                <div class="form-group">
+                    <label for="voiceSelect" data-i18n="voice-select">选择音色</label>
+                    <select id="voiceSelect" name="voiceSelect">
+                        <option value="none" data-i18n="default-voice">默认音色</option>
+                    </select>
+                </div>
+
+                <div class="advanced-section">
+                    <div id="advancedContent" class="advanced-content show">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="temperature" data-i18n="temperature">Temperature</label>
+                                <input type="number" id="temperature" name="temperature" value="1.0" min="0.1" max="2.0" step="0.1">
+                            </div>
+                            <div class="form-group">
+                                <label for="topP" data-i18n="top-p">Top P</label>
+                                <input type="number" id="topP" name="topP" value="0.9" min="0.1" max="1.0" step="0.1">
+                            </div>
+                            <div class="form-group">
+                                <label for="speed" data-i18n="speed">语速</label>
+                                <input type="number" id="speed" name="speed" value="1.0" min="0.5" max="2.0" step="0.1">
+                            </div>
+                            <div class="form-group">
+                                <label for="seed" data-i18n="seed">随机种子</label>
+                                <input type="number" id="seed" name="seed" placeholder="留空为随机" data-i18n="seed-placeholder">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="age" data-i18n="age">年龄</label>
+                                <select id="age" name="age">
+                                    <option value="child" data-i18n="child">儿童</option>
+                                    <option value="teenager" data-i18n="teenager">青少年</option>
+                                    <option value="youth-adult" data-i18n="youth-adult">青年-成年</option>
+                                    <option value="middle-aged" data-i18n="middle-aged">中年</option>
+                                    <option value="elderly" data-i18n="elderly">老年</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="gender" data-i18n="gender">性别</label>
+                                <select id="gender" name="gender">
+                                    <option value="male" data-i18n="male">男性</option>
+                            <option value="female" data-i18n="female">女性</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="emotion" data-i18n="emotion">情感</label>
+                                <select id="emotion" name="emotion">
+                                    <option value="UNKNOWN" data-i18n="unknown">未知</option>
+                                    <option value="NEUTRAL" data-i18n="neutral">中性</option>
+                                    <option value="ANGRY" data-i18n="angry">愤怒</option>
+                                    <option value="HAPPY" data-i18n="happy">快乐</option>
+                                    <option value="SAD" data-i18n="sad">悲伤</option>
+                                    <option value="FEARFUL" data-i18n="fearful">恐惧</option>
+                                    <option value="DISGUSTED" data-i18n="disgusted">厌恶</option>
+                                    <option value="SURPRISED" data-i18n="surprised">惊讶</option>
+                                    <option value="SARCASTIC" data-i18n="sarcastic">讽刺</option>
+                                    <option value="EXCITED" data-i18n="excited">兴奋</option>
+                                    <option value="SLEEPY" data-i18n="sleepy">困倦</option>
+                                    <option value="CONFUSED" data-i18n="confused">困惑</option>
+                                    <option value="EMPHASIS" data-i18n="emphasis">强调</option>
+                                    <option value="LAUGHING" data-i18n="laughing">大笑</option>
+                                    <option value="SINGING" data-i18n="singing">歌唱</option>
+                                    <option value="WORRIED" data-i18n="worried">担忧</option>
+                                    <option value="WHISPER" data-i18n="whisper">耳语</option>
+                                    <option value="ANXIOUS" data-i18n="anxious">焦虑</option>
+                                    <option value="NO-AGREEMENT" data-i18n="no-agreement">不同意</option>
+                                    <option value="APOLOGETIC" data-i18n="apologetic">道歉</option>
+                                    <option value="CONCERNED" data-i18n="concerned">关切</option>
+                                    <option value="ENUNCIATED" data-i18n="enunciated">清晰发音</option>
+                                    <option value="ASSERTIVE" data-i18n="assertive">坚定</option>
+                                    <option value="ENCOURAGING" data-i18n="encouraging">鼓励</option>
+                                    <option value="CONTEMPT" data-i18n="contempt">蔑视</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="pitch" data-i18n="pitch">音调</label>
+                                <select id="pitch" name="pitch">
+                                    <option value="low_pitch" data-i18n="low-pitch">低音调</option>
+                                    <option value="medium_pitch" data-i18n="medium-pitch">中音调</option>
+                                    <option value="high_pitch" data-i18n="high-pitch">高音调</option>
+                                    <option value="very_high_pitch" data-i18n="very-high-pitch">极高音调</option>
+                                </select>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
-                <div class="test-controls">
-                    <button type="button" class="btn" id="startConcurrentTest">
-                        ▶️ 开始并发测试
-                    </button>
-                    <button type="button" class="btn btn-secondary" id="stopConcurrentTest" disabled>
-                        ⏹️ 停止测试
-                    </button>
+                <button type="submit" id="generateBtn" class="btn" data-i18n="generate-btn">🎵 生成语音</button>
+            </form>
+
+            <div id="loading" class="loading">
+                <div>🔄 正在生成语音，请稍候...</div>
+            </div>
+
+            <div id="result" class="result">
+                <div id="resultMessage"></div>
+                <div id="audioPlayer" class="audio-player"></div>
+            </div>
+        </div>
+
+        <!-- 声音克隆标签页 -->
+        <div id="clone" class="tab-content">
+            <div class="form-group">
+                <label data-i18n="upload-audio">上传音频文件</label>
+                <div class="voice-upload" id="voiceUpload">
+                    <div class="upload-icon">🎤</div>
+                    <div class="upload-text" data-i18n="upload-drop-text">点击或拖拽音频文件到此处</div>
+                    <div class="upload-hint" data-i18n="upload-hint-text">支持 WAV, MP3 格式，建议时长 3-30 秒</div>
+                    <input type="file" id="voiceFile" accept=".wav,.mp3" style="display: none;">
                 </div>
-
-                <div class="concurrent-status" id="concurrentStatus" style="display: none;">
-                    <div class="status-grid">
-                        <div class="status-card">
-                            <div class="status-label">进行中</div>
-                            <div class="status-value" id="runningCount">0</div>
-                        </div>
-                        <div class="status-card success">
-                            <div class="status-label">成功</div>
-                            <div class="status-value" id="successCount">0</div>
-                        </div>
-                        <div class="status-card error">
-                            <div class="status-label">失败</div>
-                            <div class="status-value" id="failureCount">0</div>
-                        </div>
-                        <div class="status-card">
-                            <div class="status-label">总计</div>
-                            <div class="status-value" id="totalCount">0</div>
-                        </div>
-                    </div>
-
-                    <div class="progress-container">
-                        <div class="progress-bar">
-                            <div class="progress-fill" id="progressFill"></div>
-                        </div>
-                        <div class="progress-text" id="progressText">0%</div>
+                <div id="fileInfo" class="file-info">
+                    <div id="fileName"></div>
+                    <div id="fileSize"></div>
+                </div>
+                <!-- 音频播放器 -->
+                <div id="audioPreviewPlayer" class="audio-player" style="display: none; margin-top: 15px;">
+                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;" data-i18n="audio-preview">🎵 音频预览</label>
+                    <div id="waveform" style="width: 100%; height: 80px; border-radius: 8px; background: #f8f9fa; border: 1px solid #e9ecef;"></div>
+                    <div class="audio-controls" style="margin-top: 10px; display: flex; align-items: center; gap: 10px;">
+                        <button id="playPauseBtn" style="background: #667eea; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px;" data-i18n="play-btn">▶️ 播放</button>
+                        <span id="audioTime" style="font-size: 14px; color: #666;">00:00 / 00:00</span>
                     </div>
                 </div>
+            </div>
 
-                <div class="test-results" id="testResults" style="display: none;">
-                    <h3>测试结果</h3>
-                    <div class="results-summary" id="resultsSummary"></div>
-                    <div class="results-details" id="resultsDetails"></div>
+            <div class="form-group">
+                <label for="voicePrompt" data-i18n="audio-content">音频内容</label>
+                <textarea id="voicePrompt" name="voicePrompt" placeholder="请输入音频中说话的文字内容..." rows="3" data-i18n="audio-content-placeholder"></textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="voiceName" data-i18n="voice-name">音色名称</label>
+                <input type="text" id="voiceName" name="voiceName" placeholder="为这个音色起一个名字" data-i18n="voice-name-placeholder">
+            </div>
+
+            <button type="button" id="extractBtn" class="btn" onclick="extractVoiceFeature()" data-i18n="extract-voice">🎭 提取音色特征</button>
+
+            <div id="cloneResult" class="result">
+                <div id="cloneMessage"></div>
+            </div>
+
+            <div class="form-group" style="margin-top: 30px;">
+                <label data-i18n="saved-voices">已保存的音色</label>
+                <div id="voiceList" class="voice-list">
+                    <!-- 音色列表将在这里动态加载 -->
                 </div>
             </div>
         </div>
 
-        <div id="apiTab" class="tab-content">
-            <div class="api-documentation">
-                <h2>📖 API 使用说明</h2>
+        <!-- API说明标签页 -->
+        <div id="api" class="tab-content">
+            <div class="status-section">
+                <h3 style="margin-bottom: 20px; color: #333;" data-i18n="api-title">📖 API 接口说明</h3>
                 
-                <div class="api-section">
-                    <h3>🔗 API 端点</h3>
-                    <div class="code-block">
-                        <code>POST /api/tts</code>
-                    </div>
-                    <p>用于生成语音的主要API端点。支持JSON和multipart/form-data两种请求格式。</p>
-                </div>
-
-                <div class="api-section">
-                    <h3>📋 请求参数</h3>
-                    <div class="param-table">
-                        <div class="param-row header">
-                            <div class="param-name">参数名</div>
-                            <div class="param-type">类型</div>
-                            <div class="param-required">必需</div>
-                            <div class="param-description">说明</div>
-                        </div>
-                        <div class="param-row">
-                            <div class="param-name">text</div>
-                            <div class="param-type">string</div>
-                            <div class="param-required">是</div>
-                            <div class="param-description">要转换为语音的文本内容</div>
-                        </div>
-                        <div class="param-row">
-                            <div class="param-name">temperature</div>
-                            <div class="param-type">float</div>
-                            <div class="param-required">否</div>
-                            <div class="param-description">温度参数 (0.1-2.0)，默认1.0</div>
-                        </div>
-                        <div class="param-row">
-                            <div class="param-name">top_p</div>
-                            <div class="param-type">float</div>
-                            <div class="param-required">否</div>
-                            <div class="param-description">Top-P参数 (0.1-1.0)，默认0.3</div>
-                        </div>
-                        <div class="param-row">
-                            <div class="param-name">speed</div>
-                            <div class="param-type">float</div>
-                            <div class="param-required">否</div>
-                            <div class="param-description">语速 (0.5-2.0)，默认1.0</div>
-                        </div>
-                        <div class="param-row">
-                            <div class="param-name">seed</div>
-                            <div class="param-type">integer</div>
-                            <div class="param-required">否</div>
-                            <div class="param-description">随机种子，用于复现结果</div>
-                        </div>
-                        <div class="param-row">
-                            <div class="param-name">age</div>
-                            <div class="param-type">string</div>
-                            <div class="param-required">否</div>
-                            <div class="param-description">年龄：child, teenager, youth-adult, middle-aged, elderly</div>
-                        </div>
-                        <div class="param-row">
-                            <div class="param-name">gender</div>
-                            <div class="param-type">string</div>
-                            <div class="param-required">否</div>
-                            <div class="param-description">性别：male, female</div>
-                        </div>
-                        <div class="param-row">
-                            <div class="param-name">emotion</div>
-                            <div class="param-type">string</div>
-                            <div class="param-required">否</div>
-                            <div class="param-description">情感：NEUTRAL, HAPPY, SAD, ANGRY等</div>
-                        </div>
-                        <div class="param-row">
-                            <div class="param-name">pitch</div>
-                            <div class="param-type">string</div>
-                            <div class="param-required">否</div>
-                            <div class="param-description">音调：low_pitch, medium_pitch, high_pitch, very_high_pitch</div>
-                        </div>
-                        <div class="param-row">
-                            <div class="param-name">zero_shot</div>
-                            <div class="param-type">boolean</div>
-                            <div class="param-required">否</div>
-                            <div class="param-description">是否启用Zero-shot模式</div>
-                        </div>
-                        <div class="param-row">
-                            <div class="param-name">prompt_text</div>
-                            <div class="param-type">string</div>
-                            <div class="param-required">否</div>
-                            <div class="param-description">Zero-shot模式下的提示词</div>
-                        </div>
-                        <div class="param-row">
-                            <div class="param-name">refAudioFile</div>
-                            <div class="param-type">file</div>
-                            <div class="param-required">否</div>
-                            <div class="param-description">Zero-shot模式下的参考音频文件</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="api-section">
-                    <h3>📤 响应格式</h3>
-                    <h4>成功响应：</h4>
-                    <div class="code-block">
-                        <pre><code>{
+                <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <h4 style="color: #667eea; margin-bottom: 15px;" data-i18n="tts-api-title">🎵 TTS 语音合成 API</h4>
+                    <p><strong data-i18n="api-endpoint">接口地址：</strong><code>POST /api/tts</code></p>
+                    <p><strong data-i18n="request-format">请求格式：</strong>JSON</p>
+                    
+                    <h5 style="margin-top: 20px; margin-bottom: 10px;" data-i18n="request-params">请求参数：</h5>
+                    <table style="width: 100%; border-collapse: collapse; margin-bottom: 15px;">
+                        <tr style="background: #f8f9fa;">
+                            <th style="border: 1px solid #dee2e6; padding: 8px; text-align: left;" data-i18n="param-name">参数名</th>
+                            <th style="border: 1px solid #dee2e6; padding: 8px; text-align: left;" data-i18n="param-type">类型</th>
+                            <th style="border: 1px solid #dee2e6; padding: 8px; text-align: left;" data-i18n="param-required">必填</th>
+                            <th style="border: 1px solid #dee2e6; padding: 8px; text-align: left;" data-i18n="param-description">说明</th>
+                        </tr>
+                        <tr>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;">text</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;">string</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;" data-i18n="required-yes">是</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;" data-i18n="text-content">要转换的文本内容</td>
+                        </tr>
+                        <tr>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;">temperature</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;">float</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;" data-i18n="required-no">否</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;" data-i18n="sampling-temperature">采样温度，默认1.0</td>
+                        </tr>
+                        <tr>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;">top_p</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;">float</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;" data-i18n="required-no">否</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;" data-i18n="top-p-sampling">Top-p采样，默认0.9</td>
+                        </tr>
+                        <tr>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;">speed</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;">float</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;" data-i18n="required-no">否</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;" data-i18n="speech-speed">语速，默认1.0</td>
+                        </tr>
+                        <tr>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;">seed</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;">int</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;" data-i18n="required-no">否</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;" data-i18n="random-seed">随机种子，可选</td>
+                        </tr>
+                        <tr>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;">voice_id</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;">string</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;" data-i18n="required-no">否</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;" data-i18n="voice-id">音色ID（声音克隆）</td>
+                        </tr>
+                        <tr>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;">age</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;">string</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;" data-i18n="required-no">否</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;" data-i18n="age-options">年龄：child, teenager, youth-adult, middle-aged, elderly</td>
+                        </tr>
+                        <tr>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;">gender</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;">string</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;" data-i18n="required-no">否</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;" data-i18n="gender-options">性别：male, female</td>
+                        </tr>
+                        <tr>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;">emotion</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;">string</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;" data-i18n="required-no">否</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;" data-i18n="emotion-options">情感：UNKNOWN, NEUTRAL, ANGRY, HAPPY, SAD, FEARFUL, DISGUSTED, SURPRISED, SARCASTIC, EXCITED, SLEEPY, CONFUSED, EMPHASIS, LAUGHING, SINGING, WORRIED, WHISPER, ANXIOUS, NO-AGREEMENT, APOLOGETIC, CONCERNED, ENUNCIATED, ASSERTIVE, ENCOURAGING, CONTEMPT</td>
+                        </tr>
+                        <tr>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;">pitch</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;">string</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;" data-i18n="required-no">否</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;" data-i18n="pitch-options">音调：low_pitch, medium_pitch, high_pitch, very_high_pitch</td>
+                        </tr>
+                    </table>
+                    
+                    <h5 style="margin-top: 20px; margin-bottom: 10px;" data-i18n="request-example">请求示例：</h5>
+                    <pre style="background: #f8f9fa; padding: 15px; border-radius: 5px; overflow-x: auto; font-size: 14px;"><code>{
+  "text": "你好，这是一个语音合成测试。",
+  "temperature": 1.0,
+  "top_p": 0.9,
+  "speed": 1.0,
+  "age": "youth-adult",
+  "gender": "female",
+  "emotion": "HAPPY",
+  "pitch": "medium_pitch"
+}</code></pre>
+                    
+                    <h5 style="margin-top: 20px; margin-bottom: 10px;" data-i18n="response-format">响应格式：</h5>
+                    <pre style="background: #f8f9fa; padding: 15px; border-radius: 5px; overflow-x: auto; font-size: 14px;"><code>{
   "success": true,
-  "audio_base64": "UklGRiQAAABXQVZFZm10IBAAAAABAAEA...",
+  "audio_base64": "UklGRi...",
   "duration_ms": 1234,
-  "rtf": 0.123,
-  "message": "语音生成成功"
+  "rtf": 0.123
 }</code></pre>
-                    </div>
-                    
-                    <h4>错误响应：</h4>
-                    <div class="code-block">
-                        <pre><code>{
-  "success": false,
-  "error": "错误描述",
-  "message": "详细错误信息"
-}</code></pre>
-                    </div>
                 </div>
-
-                <div class="api-section">
-                    <h3>💡 使用示例</h3>
+                
+                <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <h4 style="color: #667eea; margin-bottom: 15px;" data-i18n="voice-clone-api-title">🎭 声音克隆 API</h4>
                     
-                    <h4>cURL 示例：</h4>
-                    <div class="code-block">
-                        <pre><code># 基本请求
-curl -X POST http://localhost:8080/api/tts \
+                    <!-- API 1: 提取音色特征 -->
+                    <div style="border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; margin: 20px 0; background: #fafafa;">
+                        <h5 style="margin-top: 0; margin-bottom: 15px; color: #2c3e50; border-bottom: 2px solid #667eea; padding-bottom: 8px;" data-i18n="extract-voice-title">1. 提取音色特征</h5>
+                        <p><strong data-i18n="api-endpoint">接口地址：</strong><code style="background: #e8f4fd; padding: 2px 6px; border-radius: 3px;">POST /api/voice-clone/extract</code></p>
+                        <p><strong data-i18n="request-format">请求格式：</strong><code style="background: #e8f4fd; padding: 2px 6px; border-radius: 3px;">multipart/form-data</code></p>
+                        <p><strong data-i18n="api-params">参数：</strong><span data-i18n="extract-params-desc">audio_file (音频文件), prompt (音频内容), voice_name (音色名称)</span></p>
+                    </div>
+                    
+                    <!-- API 2: 获取音色列表 -->
+                    <div style="border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; margin: 20px 0; background: #fafafa;">
+                        <h5 style="margin-top: 0; margin-bottom: 15px; color: #2c3e50; border-bottom: 2px solid #667eea; padding-bottom: 8px;" data-i18n="get-voice-list-title">2. 获取音色列表</h5>
+                        <p><strong data-i18n="api-endpoint">接口地址：</strong><code style="background: #e8f4fd; padding: 2px 6px; border-radius: 3px;">GET /api/voice-clone/list</code></p>
+                        <p><strong data-i18n="request-method">请求方法：</strong><code style="background: #e8f4fd; padding: 2px 6px; border-radius: 3px;">GET</code></p>
+                        <p><strong data-i18n="api-description">说明：</strong><span data-i18n="get-voice-list-desc">获取所有已保存的音色列表</span></p>
+                        
+                        <h6 style="margin-top: 15px; margin-bottom: 10px; color: #34495e;" data-i18n="response-format">响应格式：</h6>
+                        <pre style="background: #2c3e50; color: #ecf0f1; padding: 15px; border-radius: 5px; overflow-x: auto; font-size: 14px; border-left: 4px solid #667eea;"><code>{
+  "voices": [
+    {
+      "id": "voice_001",
+      "name": "张三的声音",
+      "description": "温和的男性声音",
+      "created_at": "2024-01-01T12:00:00Z"
+    },
+    {
+      "id": "voice_002",
+      "name": "李四的声音",
+      "description": "清脆的女性声音",
+      "created_at": "2024-01-02T12:00:00Z"
+    }
+  ]
+}</code></pre>
+                        
+                        <h6 style="margin-top: 15px; margin-bottom: 10px; color: #34495e;" data-i18n="curl-example">cURL 示例：</h6>
+                        <pre style="background: #27ae60; color: white; padding: 15px; border-radius: 5px; overflow-x: auto; font-size: 14px; border-left: 4px solid #2ecc71;"><code>curl -X GET http://localhost:8080/api/voice-clone/list</code></pre>
+                    </div>
+                    
+                    <!-- API 3: 删除音色 -->
+                    <div style="border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; margin: 20px 0; background: #fafafa;">
+                        <h5 style="margin-top: 0; margin-bottom: 15px; color: #2c3e50; border-bottom: 2px solid #667eea; padding-bottom: 8px;" data-i18n="delete-voice-title">3. 删除音色</h5>
+                        <p><strong data-i18n="api-endpoint">接口地址：</strong><code style="background: #e8f4fd; padding: 2px 6px; border-radius: 3px;">POST /api/voice-clone/delete</code></p>
+                        <p><strong data-i18n="request-method">请求方法：</strong><code style="background: #e8f4fd; padding: 2px 6px; border-radius: 3px;">POST</code></p>
+                        <p><strong data-i18n="request-format">请求格式：</strong><code style="background: #e8f4fd; padding: 2px 6px; border-radius: 3px;">JSON</code></p>
+                        <p><strong data-i18n="api-params">参数：</strong><code style="background: #fff3cd; padding: 2px 6px; border-radius: 3px;" data-i18n="delete-params-desc">{"voice_id": "音色ID"}</code></p>
+                        <p><strong data-i18n="api-description">说明：</strong><span data-i18n="delete-voice-desc">删除指定ID的音色</span></p>
+                        
+                        <h6 style="margin-top: 15px; margin-bottom: 10px; color: #34495e;" data-i18n="curl-example">cURL 示例：</h6>
+                        <pre style="background: #e74c3c; color: white; padding: 15px; border-radius: 5px; overflow-x: auto; font-size: 14px; border-left: 4px solid #c0392b;"><code>curl -X POST http://localhost:8080/api/voice-clone/delete \
   -H "Content-Type: application/json" \
-  -d '{
-    "text": "你好，这是一个测试文本",
-    "temperature": 1.0,
-    "top_p": 0.3,
-    "speed": 1.0
-  }'
-
-# Zero-shot模式（带文件上传）
-curl -X POST http://localhost:8080/api/tts \
-  -F "text=你好，这是一个测试文本" \
-  -F "zero_shot=true" \
-  -F "prompt_text=这是一个温和的女性声音" \
-  -F "refAudioFile=@reference.wav"</code></pre>
-                    </div>
-                    
-                    <h4>JavaScript 示例：</h4>
-                    <div class="code-block">
-                        <pre><code>// 基本请求
-const response = await fetch('/api/tts', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify({
-    text: '你好，这是一个测试文本',
-    temperature: 1.0,
-    top_p: 0.3,
-    speed: 1.0,
-    age: 'youth-adult',
-    gender: 'female',
-    emotion: 'HAPPY'
-  })
-});
-
-const result = await response.json();
-if (result.success) {
-  // 处理音频数据
-  const audioBlob = base64ToBlob(result.audio_base64, 'audio/wav');
-  const audioUrl = URL.createObjectURL(audioBlob);
-  // 播放或下载音频
-}</code></pre>
-                    </div>
-                    
-                    <h4>Python 示例：</h4>
-                    <div class="code-block">
-                        <pre><code>import requests
-import base64
-
-# 基本请求
-response = requests.post('http://localhost:8080/api/tts', json={
-    'text': '你好，这是一个测试文本',
-    'temperature': 1.0,
-    'top_p': 0.3,
-    'speed': 1.0,
-    'age': 'youth-adult',
-    'gender': 'female',
-    'emotion': 'HAPPY'
-})
-
-if response.status_code == 200:
-    result = response.json()
-    if result['success']:
-        # 保存音频文件
-        audio_data = base64.b64decode(result['audio_base64'])
-        with open('output.wav', 'wb') as f:
-            f.write(audio_data)
-        print(f"音频生成成功，耗时: {result['duration_ms']}ms")
-    else:
-        print(f"生成失败: {result['error']}")</code></pre>
+  -d '{"voice_id": "voice_001"}'</code></pre>
                     </div>
                 </div>
+                
 
-                <div class="api-section">
-                    <h3>⚠️ 错误码说明</h3>
-                    <div class="param-table">
-                        <div class="param-row header">
-                            <div class="param-name">HTTP状态码</div>
-                            <div class="param-type">错误类型</div>
-                            <div class="param-required">说明</div>
-                            <div class="param-description">解决方案</div>
-                        </div>
-                        <div class="param-row">
-                            <div class="param-name">200</div>
-                            <div class="param-type">成功</div>
-                            <div class="param-required">请求成功</div>
-                            <div class="param-description">检查响应中的success字段</div>
-                        </div>
-                        <div class="param-row">
-                            <div class="param-name">400</div>
-                            <div class="param-type">请求错误</div>
-                            <div class="param-required">参数错误或格式不正确</div>
-                            <div class="param-description">检查请求参数和格式</div>
-                        </div>
-                        <div class="param-row">
-                            <div class="param-name">500</div>
-                            <div class="param-type">服务器错误</div>
-                            <div class="param-required">服务器内部错误</div>
-                            <div class="param-description">检查服务器日志或稍后重试</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="api-section">
-                    <h3>📝 注意事项</h3>
-                    <ul class="note-list">
-                        <li>文本长度建议不超过1000个字符，过长的文本可能导致生成时间过长</li>
-                        <li>Zero-shot模式需要上传参考音频文件，支持WAV、MP3、FLAC、M4A格式</li>
-                        <li>参考音频文件大小建议不超过10MB</li>
-                        <li>相同的seed值可以复现相同的生成结果</li>
-                        <li>temperature值越高，生成的语音越随机；越低，越稳定</li>
-                        <li>API响应中的audio_base64字段包含WAV格式的音频数据</li>
-                        <li>RTF (Real Time Factor) 表示生成速度，值越小表示生成越快</li>
-                    </ul>
-                </div>
             </div>
         </div>
     </div>
 
     <script>
-        let serverStatus = null;
-        let concurrentTestRunning = false;
-        let concurrentTestResults = [];
-        let testStartTime = null;
 
-        // 页面加载时获取服务器状态
-        window.addEventListener('load', async () => {
-            await fetchServerStatus();
+
+        // 页面加载时初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            loadVoiceList();
+            setupVoiceUpload();
+            setupVoiceSelectListener();
         });
-
-        // 标签页切换函数
-        function switchTab(tabName) {
-            // 隐藏所有标签内容
-            document.querySelectorAll('.tab-content').forEach(tab => {
-                tab.classList.remove('active');
-            });
-            
-            // 移除所有按钮的active状态
-            document.querySelectorAll('.tab-button').forEach(btn => {
-                btn.classList.remove('active');
-            });
-            
-            // 显示选中的标签内容
-            if (tabName === 'single') {
-                document.getElementById('singleTab').classList.add('active');
-                document.querySelector('[onclick="switchTab(\'single\')"]').classList.add('active');
-            } else if (tabName === 'concurrent') {
-                document.getElementById('concurrentTab').classList.add('active');
-                document.querySelector('[onclick="switchTab(\'concurrent\')"]').classList.add('active');
-            }
-        }
-
-        // 并发测试相关函数
-        async function startConcurrentTest() {
-            if (concurrentTestRunning) return;
-            
-            const concurrency = parseInt(document.getElementById('concurrentCount').value);
-            const timeout = parseInt(document.getElementById('testTimeout').value) * 1000;
-            const testText = document.getElementById('concurrentText').value.trim();
-            
-            if (!testText) {
-                alert('请输入测试文本');
-                return;
-            }
-            
-            concurrentTestRunning = true;
-            concurrentTestResults = [];
-            testStartTime = Date.now();
-            
-            // 更新UI状态
-            document.getElementById('startConcurrentTest').disabled = true;
-            document.getElementById('stopConcurrentTest').disabled = false;
-            
-            // 显示并重置状态显示
-            document.getElementById('concurrentStatus').style.display = 'block';
-            updateConcurrentStatus(0, 0, concurrency);
-            updateProgress(0, concurrency);
-            
-            // 创建并发请求
-            const promises = [];
-            for (let i = 0; i < concurrency; i++) {
-                promises.push(performSingleRequest(i, testText, timeout));
-            }
-            
-            try {
-                await Promise.allSettled(promises);
-            } catch (error) {
-                console.error('并发测试错误:', error);
-            }
-            
-            // 测试完成
-            concurrentTestRunning = false;
-            document.getElementById('startConcurrentTest').disabled = false;
-            document.getElementById('stopConcurrentTest').disabled = true;
-            
-            // 显示最终结果
-            displayTestResults();
-        }
-        
-        function stopConcurrentTest() {
-            concurrentTestRunning = false;
-            document.getElementById('startConcurrentTest').disabled = false;
-            document.getElementById('stopConcurrentTest').disabled = true;
-        }
-        
-        async function performSingleRequest(requestId, text, timeout) {
-            if (!concurrentTestRunning) return;
-            
-            const startTime = Date.now();
-            const result = {
-                id: requestId,
-                startTime: startTime,
-                endTime: null,
-                duration: null,
-                success: false,
-                error: null,
-                audioData: null
-            };
-            
-            try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), timeout);
-                
-                // 读取seed与top_p
-                const seedVal = (() => {
-                    const v = document.getElementById('seed')?.value?.trim?.() ?? '';
-                    return v === '' ? null : Number(v);
-                })();
-                const topPVal = Number(document.getElementById('topP')?.value ?? 0.3);
-                
-                const response = await fetch('/api/tts', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        text: text,
-                        temperature: parseFloat(document.getElementById('temperature').value),
-                        top_p: topPVal,
-                        speed: parseFloat(document.getElementById('speed').value),
-                        seed: seedVal
-                    }),
-                    signal: controller.signal
-                });
-                
-                clearTimeout(timeoutId);
-                
-                if (response.ok) {
-                    const responseData = await response.json();
-                    if (responseData.success && responseData.audio_base64) {
-                        result.success = true;
-                        result.audioData = responseData.audio_base64;
-                    } else {
-                        result.error = responseData.error || responseData.message || '生成失败';
-                    }
-                } else {
-                    result.error = `HTTP ${response.status}: ${response.statusText}`;
-                }
-            } catch (error) {
-                if (error.name === 'AbortError') {
-                    result.error = '请求超时';
-                } else {
-                    result.error = error.message;
-                }
-            }
-            
-            result.endTime = Date.now();
-            result.duration = result.endTime - result.startTime;
-            
-            concurrentTestResults.push(result);
-            
-            // 更新实时状态
-            const completed = concurrentTestResults.length;
-            const successful = concurrentTestResults.filter(r => r.success).length;
-            const failed = concurrentTestResults.filter(r => !r.success).length;
-            const remaining = parseInt(document.getElementById('concurrentCount').value) - completed;
-            
-            updateConcurrentStatus(successful, failed, remaining);
-            updateProgress(completed, parseInt(document.getElementById('concurrentCount').value));
-        }
-        
-        function updateConcurrentStatus(successful, failed, remaining) {
-            document.getElementById('successCount').textContent = successful;
-            document.getElementById('failureCount').textContent = failed;
-            document.getElementById('runningCount').textContent = remaining;
-        }
-        
-        function updateProgress(completed, total) {
-            const percentage = (completed / total) * 100;
-            document.getElementById('progressFill').style.width = percentage + '%';
-            document.getElementById('progressText').textContent = `${completed}/${total} (${percentage.toFixed(1)}%)`;
-        }
-        
-        function displayTestResults() {
-            const totalRequests = concurrentTestResults.length;
-            const successfulRequests = concurrentTestResults.filter(r => r.success).length;
-            const failedRequests = totalRequests - successfulRequests;
-            const successRate = totalRequests > 0 ? (successfulRequests / totalRequests * 100).toFixed(1) : 0;
-            
-            const durations = concurrentTestResults.filter(r => r.duration !== null).map(r => r.duration);
-            const avgResponseTime = durations.length > 0 ? (durations.reduce((a, b) => a + b, 0) / durations.length).toFixed(0) : 0;
-            
-            const totalTestTime = testStartTime ? ((Date.now() - testStartTime) / 1000).toFixed(1) : 0;
-            
-            // 更新汇总信息到resultsSummary
-            const summaryContainer = document.getElementById('resultsSummary');
-            summaryContainer.innerHTML = `
-                <div class="summary-grid">
-                    <div class="summary-item">
-                        <div class="summary-label">总请求数</div>
-                        <div class="summary-value">${totalRequests}</div>
-                    </div>
-                    <div class="summary-item">
-                        <div class="summary-label">成功率</div>
-                        <div class="summary-value">${successRate}%</div>
-                    </div>
-                    <div class="summary-item">
-                        <div class="summary-label">平均响应时间</div>
-                        <div class="summary-value">${avgResponseTime}ms</div>
-                    </div>
-                    <div class="summary-item">
-                        <div class="summary-label">总测试时间</div>
-                        <div class="summary-value">${totalTestTime}s</div>
-                    </div>
-                </div>
-            `;
-            
-            // 更新详细结果
-            const detailsContainer = document.getElementById('resultsDetails');
-            detailsContainer.innerHTML = '';
-            
-            concurrentTestResults.forEach(result => {
-                const item = document.createElement('div');
-                item.className = 'result-item';
-                
-                const header = document.createElement('div');
-                header.className = 'result-header';
-                
-                const info = document.createElement('span');
-                info.className = 'result-info';
-                info.textContent = `请求 #${result.id + 1} - ${result.duration}ms`;
-                
-                const status = document.createElement('span');
-                status.className = `result-status ${result.success ? 'success' : 'error'}`;
-                status.textContent = result.success ? '成功' : result.error || '失败';
-                
-                header.appendChild(info);
-                header.appendChild(status);
-                item.appendChild(header);
-                
-                // 如果请求成功且有音频数据，添加音频播放器
-                if (result.success && result.audioData) {
-                    const audioContainer = document.createElement('div');
-                    audioContainer.className = 'audio-container';
-                    
-                    const audioBlob = base64ToBlob(result.audioData, 'audio/wav');
-                    const audioUrl = URL.createObjectURL(audioBlob);
-                    
-                    const audioPlayer = document.createElement('audio');
-                    audioPlayer.controls = true;
-                    
-                    const audioSource = document.createElement('source');
-                    audioSource.src = audioUrl;
-                    audioSource.type = 'audio/wav';
-                    
-                    audioPlayer.appendChild(audioSource);
-                    audioContainer.appendChild(audioPlayer);
-                    
-                    // 添加下载链接
-                    const downloadLink = document.createElement('a');
-                    downloadLink.className = 'audio-download';
-                    downloadLink.href = audioUrl;
-                    downloadLink.download = `concurrent_test_${result.id + 1}.wav`;
-                    downloadLink.textContent = '📥 下载音频';
-                    
-                    audioContainer.appendChild(downloadLink);
-                    item.appendChild(audioContainer);
-                }
-                
-                detailsContainer.appendChild(item);
-            });
-            
-            // 显示结果区域
-            document.getElementById('testResults').style.display = 'block';
-        }
-
-        // 获取服务器状态
-        async function fetchServerStatus() {
-            try {
-                const response = await fetch('/api/status');
-                if (response.ok) {
-                    serverStatus = await response.json();
-                    updateStatusDisplay();
-                }
-            } catch (error) {
-                console.warn('无法获取服务器状态:', error);
-            }
-        }
-
-        // 更新状态显示
-        function updateStatusDisplay() {
-            if (!serverStatus) return;
-            
-            const statusInfo = document.getElementById('statusInfo');
-            statusInfo.innerHTML = `
-                <div class="status-item">
-                    <div class="label">服务状态</div>
-                    <div class="value">${serverStatus.status}</div>
-                </div>
-                <div class="status-item">
-                    <div class="label">版本</div>
-                    <div class="value">${serverStatus.version}</div>
-                </div>
-                <div class="status-item">
-                    <div class="label">运行时间</div>
-                    <div class="value">${formatUptime(serverStatus.uptime_seconds)}</div>
-                </div>
-                <div class="status-item">
-                    <div class="label">总请求数</div>
-                    <div class="value">${serverStatus.total_requests}</div>
-                </div>
-            `;
-        }
-
-        // 格式化运行时间
-        function formatUptime(seconds) {
-            const hours = Math.floor(seconds / 3600);
-            const minutes = Math.floor((seconds % 3600) / 60);
-            const secs = seconds % 60;
-            return `${hours}h ${minutes}m ${secs}s`;
-        }
-
-        // 切换高级选项
-        function toggleAdvanced() {
-            const content = document.getElementById('advancedContent');
-            const toggle = document.querySelector('.advanced-toggle');
-            
-            if (content.classList.contains('show')) {
-                content.classList.remove('show');
-                toggle.textContent = '⚙️ 高级选项';
-            } else {
-                content.classList.add('show');
-                toggle.textContent = '⚙️ 隐藏高级选项';
-            }
-        }
-
-        // 切换Zero-shot选项显示
-        function toggleZeroShotOptions() {
-            const zeroShotCheckbox = document.getElementById('zeroShot');
-            const zeroShotOptions = document.getElementById('zeroShotOptions');
-            
-            if (zeroShotCheckbox.checked) {
-                zeroShotOptions.style.display = 'grid';
-            } else {
-                zeroShotOptions.style.display = 'none';
-            }
-        }
 
         // 表单提交处理
         document.getElementById('ttsForm').addEventListener('submit', async (e) => {
@@ -1651,138 +848,70 @@ if response.status_code == 200:
             const seedRaw = (formData.get('seed') || '').toString().trim();
             const seed = seedRaw === '' ? null : Number(seedRaw);
 
-            // 检查是否启用Zero-shot模式
-            const isZeroShot = document.getElementById('zeroShot').checked;
+            // 检查是否选择了音色
+            const selectedVoice = formData.get('voiceSelect');
             
-            // 如果启用了Zero-shot模式且选择了文件，则使用文件上传
-            if (isZeroShot && document.getElementById('refAudioFile').files.length > 0) {
-                // 使用multipart/form-data格式上传文件
-                const multipartFormData = new FormData();
-                multipartFormData.append('text', text);
-                multipartFormData.append('speaker', formData.get('speaker') || '');
-                multipartFormData.append('temperature', parseFloat(formData.get('temperature')) || 1.0);
-                multipartFormData.append('top_p', parseFloat(formData.get('topP')) || 0.3);
-                multipartFormData.append('speed', parseFloat(formData.get('speed')) || 1.0);
-                multipartFormData.append('zero_shot', isZeroShot);
-                multipartFormData.append('seed', seed || '');
-                multipartFormData.append('age', formData.get('age') || 'youth-adult');
-                multipartFormData.append('gender', formData.get('gender') || 'male');
-                multipartFormData.append('emotion', formData.get('emotion') || 'NEUTRAL');
-                multipartFormData.append('pitch', formData.get('pitch') || 'medium_pitch');
-                multipartFormData.append('prompt_text', formData.get('promptText') || '');
-                multipartFormData.append('refAudioFile', document.getElementById('refAudioFile').files[0]);
-                
-                // 显示加载状态
-                showLoading(true);
-                hideResult();
-                
-                try {
-                    const response = await fetch('/api/tts', {
-                        method: 'POST',
-                        body: multipartFormData
-                    });
+            const requestData = {
+                text: text,
+                temperature: parseFloat(formData.get('temperature')) || 1.0,
+                top_p: parseFloat(formData.get('topP')) || 0.9,
+                speed: parseFloat(formData.get('speed')) || 1.0,
+                seed: seed,
+                age: formData.get('age') || 'youth-adult',
+                gender: formData.get('gender') || 'male',
+                emotion: formData.get('emotion') || 'NEUTRAL',
+                pitch: formData.get('pitch') || 'medium_pitch'
+            };
 
-                    const result = await response.json();
+            // 如果选择了音色，添加voice_id参数
+            if (selectedVoice && selectedVoice !== 'none') {
+                requestData.voice_id = selectedVoice;
+            }
 
-                    if (result.success && result.audio_base64) {
-                        // 创建音频播放器
-                        const audioBlob = base64ToBlob(result.audio_base64, 'audio/wav');
-                        const audioUrl = URL.createObjectURL(audioBlob);
-                        
-                        const audioHtml = `
-                            <audio controls>
-                                <source src="${audioUrl}" type="audio/wav">
-                                您的浏览器不支持音频播放。
-                            </audio>
-                            <div style="margin-top: 10px;">
-                                <a href="${audioUrl}" download="tts_output.wav" style="color: #667eea; text-decoration: none;">
-                                    📥 下载音频文件
-                                </a>
-                            </div>
-                        `;
-                        
-                        showResult(
-                            `✅ 语音生成成功！耗时: ${result.duration_ms}ms, RTF: ${result.rtf?.toFixed(3) || 'N/A'}`,
-                            'success',
-                            audioHtml
-                        );
-                    } else {
-                        showResult(`❌ ${result.error || result.message || '生成失败'}`, 'error');
-                    }
-                } catch (error) {
-                    showResult(`❌ 网络错误: ${error.message}`, 'error');
-                } finally {
-                    showLoading(false);
-                    await fetchServerStatus(); // 更新状态
+            // 显示加载状态
+            showLoading(true);
+            hideResult();
+
+            try {
+                const response = await fetch('/api/tts', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestData)
+                });
+
+                const result = await response.json();
+
+                if (result.success && result.audio_base64) {
+                    // 创建音频播放器
+                    const audioBlob = base64ToBlob(result.audio_base64, 'audio/wav');
+                    const audioUrl = URL.createObjectURL(audioBlob);
+                    
+                    const audioHtml = `
+                        <audio controls>
+                            <source src="${audioUrl}" type="audio/wav">
+                            您的浏览器不支持音频播放。
+                        </audio>
+                        <div style="margin-top: 10px;">
+                            <a href="${audioUrl}" download="tts_output.wav" style="color: #667eea; text-decoration: none;">
+                                📥 下载音频文件
+                            </a>
+                        </div>
+                    `;
+                    
+                    showResult(
+                        `✅ 语音生成成功！耗时: ${result.duration_ms}ms, RTF: ${result.rtf?.toFixed(3) || 'N/A'}`,
+                        'success',
+                        audioHtml
+                    );
+                } else {
+                    showResult(`❌ ${result.error || result.message || '生成失败'}`, 'error');
                 }
-            } else {
-                // 使用普通的JSON请求
-                const requestData = {
-                    text: text,
-                    temperature: parseFloat(formData.get('temperature')) || 1.0,
-                    top_p: parseFloat(formData.get('topP')) || 0.3,
-                    speed: parseFloat(formData.get('speed')) || 1.0,
-                    zero_shot: isZeroShot,
-                    ref_audio_path: formData.get('refAudio') || null,
-                    seed: seed,
-                    // 添加新的高级选项
-                    age: formData.get('age') || 'youth-adult',
-                    gender: formData.get('gender') || 'male',
-                    emotion: formData.get('emotion') || 'NEUTRAL',
-                    pitch: formData.get('pitch') || 'medium_pitch'
-                };
-
-                // 如果启用了Zero-shot模式，添加提示词
-                if (isZeroShot) {
-                    requestData.prompt_text = formData.get('promptText') || '';
-                }
-
-                // 显示加载状态
-                showLoading(true);
-                hideResult();
-
-                try {
-                    const response = await fetch('/api/tts', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify(requestData)
-                    });
-
-                    const result = await response.json();
-
-                    if (result.success && result.audio_base64) {
-                        // 创建音频播放器
-                        const audioBlob = base64ToBlob(result.audio_base64, 'audio/wav');
-                        const audioUrl = URL.createObjectURL(audioBlob);
-                        
-                        const audioHtml = `
-                            <audio controls>
-                                <source src="${audioUrl}" type="audio/wav">
-                                您的浏览器不支持音频播放。
-                            </audio>
-                            <div style="margin-top: 10px;">
-                                <a href="${audioUrl}" download="tts_output.wav" style="color: #667eea; text-decoration: none;">
-                                    📥 下载音频文件
-                                </a>
-                            </div>
-                        `;
-                        
-                        showResult(
-                            `✅ 语音生成成功！耗时: ${result.duration_ms}ms, RTF: ${result.rtf?.toFixed(3) || 'N/A'}`,
-                            'success',
-                            audioHtml
-                        );
-                    } else {
-                        showResult(`❌ ${result.error || result.message || '生成失败'}`, 'error');
-                    }
-                } catch (error) {
-                    showResult(`❌ 网络错误: ${error.message}`, 'error');
-                } finally {
-                    showLoading(false);
-                    await fetchServerStatus(); // 更新状态
-                }
+            } catch (error) {
+                showResult(`❌ 网络错误: ${error.message}`, 'error');
+            } finally {
+                showLoading(false);
             }
         });
 
@@ -1791,14 +920,16 @@ if response.status_code == 200:
             const loading = document.getElementById('loading');
             const btn = document.getElementById('generateBtn');
             
-            if (show) {
-                loading.style.display = 'block';
-                btn.disabled = true;
-                btn.textContent = '🔄 生成中...';
-            } else {
-                loading.style.display = 'none';
-                btn.disabled = false;
-                btn.textContent = '🎵 生成语音';
+            if (loading && btn) {
+                if (show) {
+                    loading.style.display = 'block';
+                    btn.disabled = true;
+                    btn.textContent = '🔄 生成中...';
+                } else {
+                    loading.style.display = 'none';
+                    btn.disabled = false;
+                    btn.textContent = '🎵 生成语音';
+                }
             }
         }
 
@@ -1808,16 +939,20 @@ if response.status_code == 200:
             const resultMessage = document.getElementById('resultMessage');
             const audioPlayer = document.getElementById('audioPlayer');
             
-            result.className = `result ${type}`;
-            result.style.display = 'block';
-            resultMessage.textContent = message;
-            audioPlayer.innerHTML = audioHtml;
+            if (result && resultMessage && audioPlayer) {
+                result.className = `result ${type}`;
+                result.style.display = 'block';
+                resultMessage.textContent = message;
+                audioPlayer.innerHTML = audioHtml;
+            }
         }
 
         // 隐藏结果
         function hideResult() {
             const result = document.getElementById('result');
-            result.style.display = 'none';
+            if (result) {
+                result.style.display = 'none';
+            }
         }
 
         // Base64转Blob
@@ -1854,46 +989,836 @@ if response.status_code == 200:
             }
             
             // 激活选中的标签
-            const targetTab = document.querySelector(`[onclick="switchTab('${tabName}')"]`);
+            const targetTab = document.querySelector(`[data-tab="${tabName}"]`);
             if (targetTab) {
                 targetTab.classList.add('active');
             }
         }
 
+        // 高级选项现在默认显示，根据音色选择自动隐藏/显示
+
+        // 设置音色选择监听器
+        function setupVoiceSelectListener() {
+            const voiceSelect = document.getElementById('voiceSelect');
+            const advancedContent = document.getElementById('advancedContent');
+            
+            if (voiceSelect && advancedContent) {
+                voiceSelect.addEventListener('change', function() {
+                    const selectedValue = this.value;
+                    
+                    if (selectedValue === 'none') {
+                        // 选择默认音色时，显示高级选项
+                        advancedContent.classList.remove('hidden');
+                    } else {
+                        // 选择其他音色时，隐藏高级选项
+                        advancedContent.classList.add('hidden');
+                    }
+                });
+            }
+        }
+
+
+
+        // 全局变量存储当前选择的文件
+        let currentSelectedFile = null;
+        let currentBlobURL = null;
+
+        // 清理blob URL的辅助函数
+        function cleanupBlobURL() {
+            if (currentBlobURL) {
+                try {
+                    URL.revokeObjectURL(currentBlobURL);
+                    console.log('清理blob URL:', currentBlobURL);
+                } catch (error) {
+                    console.warn('清理blob URL时出错:', error);
+                }
+                currentBlobURL = null;
+            }
+        }
+        
+        // 清理所有音频资源的函数
+        function cleanupAudioResources() {
+            cleanupBlobURL();
+            if (window.currentWaveSurfer) {
+                window.currentWaveSurfer.destroy();
+                window.currentWaveSurfer = null;
+            }
+        }
+
+        // 页面卸载时清理资源
+        window.addEventListener('beforeunload', () => {
+            cleanupAudioResources();
+        });
+
+        // 设置音色上传功能
+        function setupVoiceUpload() {
+            const uploadArea = document.getElementById('voiceUpload');
+            const fileInput = document.getElementById('voiceFile');
+            const fileInfo = document.getElementById('fileInfo');
+            const fileName = document.getElementById('fileName');
+            const fileSize = document.getElementById('fileSize');
+
+            if (!uploadArea || !fileInput) return;
+
+            // 移除可能存在的旧事件监听器
+            const newUploadArea = uploadArea.cloneNode(true);
+            uploadArea.parentNode.replaceChild(newUploadArea, uploadArea);
+            const newFileInput = fileInput.cloneNode(true);
+            fileInput.parentNode.replaceChild(newFileInput, fileInput);
+            
+            // 重新获取元素引用
+            const freshUploadArea = document.getElementById('voiceUpload');
+            const freshFileInput = document.getElementById('voiceFile');
+
+            // 点击上传区域
+            freshUploadArea.addEventListener('click', (e) => {
+                // 防止重复触发
+                e.stopPropagation();
+                freshFileInput.click();
+            });
+
+            // 文件选择
+            freshFileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    currentSelectedFile = file;
+                    displayFileInfo(file);
+                }
+            });
+
+            // 拖拽上传
+            freshUploadArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                freshUploadArea.classList.add('dragover');
+            });
+
+            freshUploadArea.addEventListener('dragleave', () => {
+                freshUploadArea.classList.remove('dragover');
+            });
+
+            freshUploadArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                freshUploadArea.classList.remove('dragover');
+                
+                const files = e.dataTransfer.files;
+                if (files.length > 0) {
+                    const file = files[0];
+                    if (file.type.startsWith('audio/')) {
+                        // 存储文件到全局变量
+                        currentSelectedFile = file;
+                        // 直接调用displayFileInfo，不设置fileInput.files避免重复触发change事件
+                        displayFileInfo(file);
+                    } else {
+                        alert('请选择音频文件');
+                    }
+                }
+            });
+
+            function displayFileInfo(file) {
+                if (fileName && fileSize && fileInfo) {
+                    fileName.textContent = `文件名: ${file.name}`;
+                    fileSize.textContent = `大小: ${(file.size / 1024 / 1024).toFixed(2)} MB`;
+                    fileInfo.classList.add('show');
+                    
+                    // 显示音频播放器
+                    const audioPlayer = document.getElementById('audioPreviewPlayer');
+                    const waveformContainer = document.getElementById('waveform');
+                    const playPauseBtn = document.getElementById('playPauseBtn');
+                    const audioTime = document.getElementById('audioTime');
+                    
+                    if (audioPlayer && waveformContainer) {
+                        // 使用全局清理函数
+                        cleanupBlobURL();
+                        
+                        // 销毁之前的wavesurfer实例
+                        if (window.currentWaveSurfer) {
+                            window.currentWaveSurfer.destroy();
+                            window.currentWaveSurfer = null;
+                        }
+                        
+                        try {
+                            // 创建新的blob URL
+                            currentBlobURL = URL.createObjectURL(file);
+                            console.log('创建新的blob URL:', currentBlobURL);
+                            
+                            // 创建WaveSurfer实例
+                            window.currentWaveSurfer = WaveSurfer.create({
+                                container: waveformContainer,
+                                waveColor: '#667eea',
+                                progressColor: '#764ba2',
+                                cursorColor: '#333',
+                                barWidth: 2,
+                                barRadius: 3,
+                                responsive: true,
+                                height: 80,
+                                normalize: true
+                            });
+                            
+                            // 加载音频文件
+                            window.currentWaveSurfer.load(currentBlobURL);
+                            
+                            // 监听加载完成事件
+                            window.currentWaveSurfer.on('ready', () => {
+                                console.log('音频加载完成');
+                                audioPlayer.style.display = 'block';
+                                updateTimeDisplay();
+                            });
+                            
+                            // 监听播放进度
+                            window.currentWaveSurfer.on('audioprocess', updateTimeDisplay);
+                            window.currentWaveSurfer.on('seek', updateTimeDisplay);
+                            
+                            // 监听播放状态变化
+                            window.currentWaveSurfer.on('play', () => {
+                                const texts = i18nTexts[currentLanguage];
+                    playPauseBtn.textContent = '⏸️ ' + texts['pause-btn'];
+                            });
+                            
+                            window.currentWaveSurfer.on('pause', () => {
+                                const texts = i18nTexts[currentLanguage];
+                        playPauseBtn.textContent = '▶️ ' + texts['play-btn'];
+                            });
+                            
+                            window.currentWaveSurfer.on('finish', () => {
+                                const texts = i18nTexts[currentLanguage];
+                    playPauseBtn.textContent = '▶️ ' + texts['play-btn'];
+                            });
+                            
+                            // 监听错误 - 添加更精确的错误判断
+                            window.currentWaveSurfer.on('error', (error) => {
+                                console.error('WaveSurfer错误:', error);
+                                
+                                // 检查是否是真正的加载错误
+                                setTimeout(() => {
+                                    if (window.currentWaveSurfer && window.currentWaveSurfer.getDuration() > 0) {
+                                        // 实际上加载成功了，不显示错误
+                                        console.log('音频实际加载成功，忽略错误事件');
+                                        return;
+                                    }
+                                    
+                                    // 真正的加载失败
+                                    console.error('音频加载失败:', error);
+                                    cleanupBlobURL();
+                                    audioPlayer.style.display = 'none';
+                                    alert('音频文件加载失败，请检查文件格式是否正确');
+                                }, 100);
+                            });
+                            
+                            // 播放/暂停按钮事件
+                            if (playPauseBtn) {
+                                playPauseBtn.onclick = () => {
+                                    if (window.currentWaveSurfer) {
+                                        window.currentWaveSurfer.playPause();
+                                    }
+                                };
+                            }
+                            
+                            // 时间显示更新函数
+                            function updateTimeDisplay() {
+                                if (window.currentWaveSurfer && audioTime) {
+                                    const current = window.currentWaveSurfer.getCurrentTime();
+                                    const total = window.currentWaveSurfer.getDuration();
+                                    audioTime.textContent = `${formatTime(current)} / ${formatTime(total)}`;
+                                }
+                            }
+                            
+                            // 时间格式化函数
+                            function formatTime(seconds) {
+                                const minutes = Math.floor(seconds / 60);
+                                const secs = Math.floor(seconds % 60);
+                                return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+                            }
+                            
+                        } catch (error) {
+                            console.error('创建wavesurfer失败:', error);
+                            alert('文件处理失败，请重试');
+                            cleanupBlobURL();
+                        }
+                    }
+                }
+            }
+        }
+
+        // 提取音色特征
+        async function extractVoiceFeature() {
+            const fileInput = document.getElementById('voiceFile');
+            const voicePrompt = document.getElementById('voicePrompt');
+            const voiceName = document.getElementById('voiceName');
+            const extractBtn = document.getElementById('extractBtn');
+            const cloneResult = document.getElementById('cloneResult');
+            const cloneMessage = document.getElementById('cloneMessage');
+
+            if (!fileInput || !voicePrompt || !voiceName || !extractBtn || !cloneResult || !cloneMessage) {
+                console.error('Required elements not found');
+                return;
+            }
+
+            // 使用全局变量获取文件
+            const file = currentSelectedFile;
+            const prompt = voicePrompt.value.trim();
+            const name = voiceName.value.trim();
+
+            if (!file) {
+                showCloneResult('请先上传音频文件', 'error');
+                return;
+            }
+
+            if (!prompt) {
+                showCloneResult('请输入音频内容', 'error');
+                return;
+            }
+
+            if (!name) {
+                showCloneResult('请输入音色名称', 'error');
+                return;
+            }
+
+            // 显示加载状态
+            extractBtn.disabled = true;
+            extractBtn.textContent = '🔄 提取中...';
+            cloneResult.style.display = 'none';
+
+            try {
+                const formData = new FormData();
+                formData.append('audio_file', file);
+                formData.append('prompt_text', prompt);
+                formData.append('voice_name', name);
+
+                const response = await fetch('/api/voice-clone/extract', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showCloneResult(`✅ 音色特征提取成功！音色ID: ${result.voice_id}`, 'success');
+                    // 清空表单
+                    fileInput.value = '';
+                    voicePrompt.value = '';
+                    voiceName.value = '';
+                    currentSelectedFile = null;
+                    document.getElementById('fileInfo').classList.remove('show');
+                    
+                    // 隐藏音频播放器并清理资源
+                    const audioPlayer = document.getElementById('audioPreviewPlayer');
+                    if (audioPlayer) {
+                        audioPlayer.style.display = 'none';
+                        
+                        // 使用全局清理函数
+                        cleanupBlobURL();
+                        
+                        // 销毁wavesurfer实例
+                        if (window.currentWaveSurfer) {
+                            window.currentWaveSurfer.destroy();
+                            window.currentWaveSurfer = null;
+                        }
+                        
+                        // 重置播放按钮文本
+            const playPauseBtn = document.getElementById('playPauseBtn');
+            if (playPauseBtn) {
+                const texts = i18nTexts[currentLanguage];
+                playPauseBtn.textContent = '▶️ ' + texts['play-btn'];
+            }
+                        
+                        // 重置时间显示
+                        const audioTime = document.getElementById('audioTime');
+                        if (audioTime) {
+                            audioTime.textContent = '00:00 / 00:00';
+                        }
+                    }
+                    // 重新加载音色列表
+                    await loadVoiceList();
+                } else {
+                    showCloneResult(`❌ ${result.error || '提取失败'}`, 'error');
+                }
+            } catch (error) {
+                showCloneResult(`❌ 网络错误: ${error.message}`, 'error');
+            } finally {
+                extractBtn.disabled = false;
+                extractBtn.textContent = '🎭 提取音色特征';
+            }
+        }
+
+        // 显示克隆结果
+        function showCloneResult(message, type = 'success') {
+            const cloneResult = document.getElementById('cloneResult');
+            const cloneMessage = document.getElementById('cloneMessage');
+            
+            if (cloneResult && cloneMessage) {
+                cloneResult.className = `result ${type}`;
+                cloneResult.style.display = 'block';
+                cloneMessage.textContent = message;
+            }
+        }
+
+        // 加载音色列表
+        async function loadVoiceList() {
+            try {
+                const response = await fetch('/api/voice-clone/list');
+                const result = await response.json();
+
+                if (result.success) {
+                    updateVoiceSelect(result.voices);
+                    updateVoiceListDisplay(result.voices);
+                }
+            } catch (error) {
+                console.warn('无法加载音色列表:', error);
+            }
+        }
+
+        // 更新音色选择下拉框
+        function updateVoiceSelect(voices) {
+            const voiceSelect = document.getElementById('voiceSelect');
+            if (!voiceSelect) return;
+
+            // 保留默认选项
+            voiceSelect.innerHTML = '<option value="none" data-i18n="default-voice">默认音色</option>';
+            
+            voices.forEach(voice => {
+                const option = document.createElement('option');
+                option.value = voice.id;
+                option.textContent = voice.name;
+                voiceSelect.appendChild(option);
+            });
+        }
+
+        // 更新音色列表显示
+        function updateVoiceListDisplay(voices) {
+            const voiceList = document.getElementById('voiceList');
+            if (!voiceList) return;
+
+            if (voices.length === 0) {
+                voiceList.innerHTML = '<div style="padding: 20px; text-align: center; color: #6c757d;">暂无保存的音色</div>';
+                return;
+            }
+
+            voiceList.innerHTML = '';
+            voices.forEach(voice => {
+                const item = document.createElement('div');
+                item.className = 'voice-item';
+                item.innerHTML = `
+                    <div class="voice-name">${voice.name}</div>
+                    <div class="voice-actions">
+                        <button class="btn-small btn-danger" onclick="deleteVoice('${voice.id}')" data-i18n="delete-btn">
+                            ${i18nTexts[currentLanguage]['delete-btn']}
+                        </button>
+                    </div>
+                `;
+                voiceList.appendChild(item);
+            });
+        }
+
+        // 删除音色
+        async function deleteVoice(voiceId) {
+            const texts = i18nTexts[currentLanguage];
+            if (!confirm(texts['delete-confirm'])) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/voice-clone/delete', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ voice_id: voiceId })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showCloneResult(texts['delete-success'], 'success');
+                    await loadVoiceList();
+                } else {
+                    showCloneResult(`❌ ${result.error || texts['delete-failed']}`, 'error');
+                }
+            } catch (error) {
+                showCloneResult(`❌ ${texts['network-error']}: ${error.message}`, 'error');
+            }
+        }
+
+        // 多语言文本对象
+        const i18nTexts = {
+            'zh': {
+                'title': '🎵 RWKV TTS',
+                'subtitle': '基于 RWKV 的高质量语音合成服务',
+                'lang-switch': '中文',
+                'tab-tts': '🎵 语音生成',
+                'tab-clone': '🎭 声音克隆',
+                'tab-api': '📖 API说明',
+                'input-text': '输入文本',
+                'ipa-coming-soon': 'IPA 即将支持',
+                'text-placeholder': '请输入要转换为语音的文本...',
+                'voice-select': '选择音色',
+                'default-voice': '默认音色',
+
+                'temperature': 'Temperature',
+                'top-p': 'Top P',
+                'speed': '语速',
+                'seed': '随机种子',
+                'seed-placeholder': '留空为随机',
+                'age': '年龄',
+                'gender': '性别',
+                'emotion': '情感',
+                'pitch': '音调',
+                'generate-btn': '🎵 生成语音',
+                'generating': '🔄 生成中...',
+                'loading-text': '🔄 正在生成语音，请稍候...',
+                'download-audio': '📥 下载音频文件',
+                // 年龄选项
+                'child': '儿童',
+                'teenager': '青少年',
+                'youth-adult': '青年-成年',
+                'middle-aged': '中年',
+                'elderly': '老年',
+                // 性别选项
+                'male': '男性',
+                'female': '女性',
+                // 情感选项
+                'unknown': '未知',
+                'neutral': '中性',
+                'angry': '愤怒',
+                'happy': '快乐',
+                'sad': '悲伤',
+                'fearful': '恐惧',
+                'disgusted': '厌恶',
+                'surprised': '惊讶',
+                'sarcastic': '讽刺',
+                'excited': '兴奋',
+                'sleepy': '困倦',
+                'confused': '困惑',
+                'emphasis': '强调',
+                'laughing': '大笑',
+                'singing': '歌唱',
+                'worried': '担忧',
+                'whisper': '耳语',
+                'anxious': '焦虑',
+                'no-agreement': '不同意',
+                'apologetic': '道歉',
+                'concerned': '关切',
+                'enunciated': '清晰发音',
+                'assertive': '坚定',
+                'encouraging': '鼓励',
+                'contempt': '蔑视',
+                // 音调选项
+                'low-pitch': '低音调',
+                'medium-pitch': '中音调',
+                'high-pitch': '高音调',
+                'very-high-pitch': '极高音调',
+                // 声音克隆相关
+                'upload-audio': '上传音频文件',
+                'audio-preview': '音频预览',
+                'audio-content': '音频内容',
+                'voice-name': '音色名称',
+                'extract-voice': '提取音色特征',
+                'saved-voices': '已保存的音色',
+                'play-btn': '播放',
+                'pause-btn': '暂停',
+                'delete-confirm': '确定要删除这个音色吗？',
+                'delete-btn': '删除',
+                'delete-success': '✅ 音色删除成功',
+                'delete-failed': '删除失败',
+                'network-error': '网络错误',
+                'audio-content-placeholder': '请输入音频中说话的文字内容...',
+                'voice-name-placeholder': '为这个音色起一个名字',
+                // 文件上传区域
+                'upload-drop-text': '点击或拖拽音频文件到此处',
+                'upload-hint-text': '支持 WAV, MP3 格式，建议时长 3-30 秒',
+                // API说明页面
+                'api-title': '📖 API 接口说明',
+                'tts-api-title': '🎵 TTS 语音合成 API',
+                'voice-clone-api-title': '🎭 声音克隆 API',
+                'api-endpoint': '接口地址：',
+                'request-format': '请求格式：',
+                'request-method': '请求方法：',
+                'request-params': '请求参数：',
+                'request-example': '请求示例：',
+                'response-format': '响应格式：',
+                'curl-example': 'cURL 示例：',
+                'description': '说明：',
+                'param-name': '参数名',
+                'param-type': '类型',
+                'param-required': '必填',
+                'param-description': '说明',
+                'required-yes': '是',
+                'required-no': '否',
+                'text-content': '要转换的文本内容',
+                'sampling-temperature': '采样温度，默认1.0',
+                'top-p-sampling': 'Top-p采样，默认0.9',
+                'speech-speed': '语速，默认1.0',
+                'random-seed': '随机种子，可选',
+                'voice-id': '音色ID（声音克隆）',
+                'age-options': '年龄：youth-adult, middle-aged, elderly',
+                'gender-options': '性别：male, female',
+                'emotion-options': '情感：NEUTRAL, HAPPY, SAD, ANGRY, SURPRISED',
+                'pitch-options': '音调：low_pitch, medium_pitch, high_pitch',
+                'extract-voice-feature': '1. 提取音色特征',
+                'get-voice-list': '2. 获取音色列表',
+                'delete-voice': '3. 删除音色',
+                'extract-params': 'audio_file (音频文件), prompt (音频内容), voice_name (音色名称)',
+                'get-all-voices': '获取所有已保存的音色列表',
+                'delete-voice-desc': '删除指定ID的音色',
+                'extract-voice-title': '1. 提取音色特征',
+                'get-voice-list-title': '2. 获取音色列表',
+                'delete-voice-title': '3. 删除音色',
+                'api-params': '参数：',
+                'api-description': '说明：',
+                'extract-params-desc': 'audio_file (音频文件), prompt (音频内容), voice_name (音色名称)',
+                'get-voice-list-desc': '获取所有已保存的音色列表',
+                'delete-params-desc': '{"voice_id": "音色ID"}'
+            },
+            'en': {
+                'title': '🎵 RWKV TTS',
+                'subtitle': 'High-quality Text-to-Speech service based on RWKV',
+                'lang-switch': 'English',
+                'tab-tts': '🎵 Text to Speech',
+                'tab-clone': '🎭 Voice Clone',
+                'tab-api': '📖 API Docs',
+                'input-text': 'Input Text',
+                'ipa-coming-soon': 'IPA Coming Soon',
+                'text-placeholder': 'Please enter the text to convert to speech...',
+                'voice-select': 'Select Voice',
+                'default-voice': 'Default Voice',
+
+                'temperature': 'Temperature',
+                'top-p': 'Top P',
+                'speed': 'Speed',
+                'seed': 'Random Seed',
+                'seed-placeholder': 'Leave empty for random',
+                'age': 'Age',
+                'gender': 'Gender',
+                'emotion': 'Emotion',
+                'pitch': 'Pitch',
+                'generate-btn': '🎵 Generate Speech',
+                'generating': '🔄 Generating...',
+                'loading-text': '🔄 Generating speech, please wait...',
+                'download-audio': '📥 Download Audio File',
+                // 年龄选项
+                'child': 'Child',
+                'teenager': 'Teenager',
+                'youth-adult': 'Youth-Adult',
+                'middle-aged': 'Middle-aged',
+                'elderly': 'Elderly',
+                // 性别选项
+                'male': 'Male',
+                'female': 'Female',
+                // 情感选项
+                'unknown': 'Unknown',
+                'neutral': 'Neutral',
+                'angry': 'Angry',
+                'happy': 'Happy',
+                'sad': 'Sad',
+                'fearful': 'Fearful',
+                'disgusted': 'Disgusted',
+                'surprised': 'Surprised',
+                'sarcastic': 'Sarcastic',
+                'excited': 'Excited',
+                'sleepy': 'Sleepy',
+                'confused': 'Confused',
+                'emphasis': 'Emphasis',
+                'laughing': 'Laughing',
+                'singing': 'Singing',
+                'worried': 'Worried',
+                'whisper': 'Whisper',
+                'anxious': 'Anxious',
+                'no-agreement': 'No-agreement',
+                'apologetic': 'Apologetic',
+                'concerned': 'Concerned',
+                'enunciated': 'Enunciated',
+                'assertive': 'Assertive',
+                'encouraging': 'Encouraging',
+                'contempt': 'Contempt',
+                // 音调选项
+                'low-pitch': 'Low Pitch',
+                'medium-pitch': 'Medium Pitch',
+                'high-pitch': 'High Pitch',
+                'very-high-pitch': 'Very High Pitch',
+                // 声音克隆相关
+                'upload-audio': 'Upload Audio File',
+                'audio-preview': 'Audio Preview',
+                'audio-content': 'Audio Content',
+                'voice-name': 'Voice Name',
+                'extract-voice': 'Extract Voice Feature',
+                'saved-voices': 'Saved Voices',
+                'play-btn': 'Play',
+                'pause-btn': 'Pause',
+                'delete-confirm': 'Are you sure you want to delete this voice?',
+                'delete-btn': 'Delete',
+                'delete-success': '✅ Voice deleted successfully',
+                'delete-failed': 'Delete failed',
+                'network-error': 'Network error',
+                'audio-content-placeholder': 'Please enter the text content of the audio...',
+                'voice-name-placeholder': 'Give this voice a name',
+                // 文件上传区域
+                'upload-drop-text': 'Click or drag audio files here',
+                'upload-hint-text': 'Supports WAV, MP3 formats, recommended duration 3-30 seconds',
+                // API说明页面
+                'api-title': '📖 API Documentation',
+                'tts-api-title': '🎵 TTS Speech Synthesis API',
+                'voice-clone-api-title': '🎭 Voice Cloning API',
+                'api-endpoint': 'Endpoint: ',
+                'request-format': 'Request Format: ',
+                'request-method': 'Request Method: ',
+                'request-params': 'Request Parameters: ',
+                'request-example': 'Request Example: ',
+                'response-format': 'Response Format: ',
+                'curl-example': 'cURL Example: ',
+                'description': 'Description: ',
+                'param-name': 'Parameter',
+                'param-type': 'Type',
+                'param-required': 'Required',
+                'param-description': 'Description',
+                'required-yes': 'Yes',
+                'required-no': 'No',
+                'text-content': 'Text content to convert',
+                'sampling-temperature': 'Sampling temperature, default 1.0',
+                'top-p-sampling': 'Top-p sampling, default 0.9',
+                'speech-speed': 'Speech speed, default 1.0',
+                'random-seed': 'Random seed, optional',
+                'voice-id': 'Voice ID (for voice cloning)',
+                'age-options': 'Age: child, teenager, youth-adult, middle-aged, elderly',
+                'gender-options': 'Gender: male, female',
+                'emotion-options': 'Emotion: UNKNOWN, NEUTRAL, ANGRY, HAPPY, SAD, FEARFUL, DISGUSTED, SURPRISED, SARCASTIC, EXCITED, SLEEPY, CONFUSED, EMPHASIS, LAUGHING, SINGING, WORRIED, WHISPER, ANXIOUS, NO-AGREEMENT, APOLOGETIC, CONCERNED, ENUNCIATED, ASSERTIVE, ENCOURAGING, CONTEMPT',
+                'pitch-options': 'Pitch: low_pitch, medium_pitch, high_pitch, very_high_pitch',
+                'extract-voice-feature': '1. Extract Voice Features',
+                'get-voice-list': '2. Get Voice List',
+                'delete-voice': '3. Delete Voice',
+                'extract-params': 'audio_file (audio file), prompt (audio content), voice_name (voice name)',
+                'get-all-voices': 'Get all saved voice list',
+                'delete-voice-desc': 'Delete voice by specified ID',
+                'extract-voice-title': '1. Extract Voice Features',
+                'get-voice-list-title': '2. Get Voice List',
+                'delete-voice-title': '3. Delete Voice',
+                'api-params': 'Parameters: ',
+                'api-description': 'Description: ',
+                'extract-params-desc': 'audio_file (audio file), prompt (audio content), voice_name (voice name)',
+                'get-voice-list-desc': 'Get all saved voice list',
+                'delete-params-desc': '{"voice_id": "voice ID"}'
+            }
+        };
+
+        // 当前语言
+        let currentLanguage = 'zh';
+
+        // 语言切换函数
+        function toggleLanguage() {
+            currentLanguage = currentLanguage === 'zh' ? 'en' : 'zh';
+            updateLanguage();
+            saveLanguagePreference();
+        }
+
+        // 更新页面语言
+        function updateLanguage() {
+            const texts = i18nTexts[currentLanguage];
+            
+            // 更新所有带有 data-i18n 属性的元素
+            document.querySelectorAll('[data-i18n]').forEach(element => {
+                const key = element.getAttribute('data-i18n');
+                if (texts[key]) {
+                    if (element.tagName === 'INPUT' && element.type === 'text') {
+                        element.placeholder = texts[key];
+                    } else if (element.tagName === 'TEXTAREA') {
+                        element.placeholder = texts[key];
+                    } else {
+                        element.textContent = texts[key];
+                    }
+                }
+            });
+
+            // 更新语言切换按钮文本
+            const langText = document.getElementById('langText');
+            if (langText) {
+                langText.textContent = texts['lang-switch'];
+            }
+
+            // 更新动态生成的内容
+            updateDynamicContent();
+        }
+
+        // 更新动态内容
+        function updateDynamicContent() {
+            const texts = i18nTexts[currentLanguage];
+            
+            // 更新生成按钮
+            const generateBtn = document.getElementById('generateBtn');
+            if (generateBtn && !generateBtn.disabled) {
+                generateBtn.textContent = texts['generate-btn'];
+            }
+
+            // 更新加载文本
+            const loadingDiv = document.querySelector('#loading div');
+            if (loadingDiv) {
+                loadingDiv.textContent = texts['loading-text'];
+            }
+
+            // 高级选项现在默认显示，无需切换按钮
+
+            // 更新动态生成的音色选择下拉框中的默认选项
+            const voiceSelect = document.getElementById('voiceSelect');
+            if (voiceSelect) {
+                const defaultOption = voiceSelect.querySelector('option[value="none"]');
+                if (defaultOption && defaultOption.hasAttribute('data-i18n')) {
+                    defaultOption.textContent = texts['default-voice'];
+                }
+            }
+
+            // 更新播放按钮文本
+            const playPauseBtn = document.getElementById('playPauseBtn');
+            if (playPauseBtn) {
+                const isPlaying = playPauseBtn.textContent.includes('⏸️');
+                if (isPlaying) {
+                    playPauseBtn.textContent = '⏸️ ' + texts['pause-btn'];
+                } else {
+                    playPauseBtn.textContent = '▶️ ' + texts['play-btn'];
+                }
+            }
+
+            // 更新动态生成的删除按钮文本
+            const deleteButtons = document.querySelectorAll('button[data-i18n="delete-btn"]');
+            deleteButtons.forEach(button => {
+                button.textContent = texts['delete-btn'];
+            });
+        }
+
+        // 保存语言偏好
+        function saveLanguagePreference() {
+            localStorage.setItem('tts-language', currentLanguage);
+        }
+
+        // 加载语言偏好
+        function loadLanguagePreference() {
+            const saved = localStorage.getItem('tts-language');
+            if (saved && i18nTexts[saved]) {
+                currentLanguage = saved;
+                updateLanguage();
+            }
+        }
+
         // 页面初始化
         document.addEventListener('DOMContentLoaded', function() {
-            // 初始化第一个标签为活跃状态
-            switchTab('singleTab');
+            // 加载语言偏好
+            loadLanguagePreference();
             
-            // 绑定并发测试按钮事件
-            const startTestBtn = document.getElementById('startConcurrentTest');
-            const stopTestBtn = document.getElementById('stopConcurrentTest');
+            // 初始化音色上传功能
+            setupVoiceUpload();
             
-            if (startTestBtn) {
-                startTestBtn.addEventListener('click', startConcurrentTest);
-            }
+            // 初始化音色选择监听器
+            setupVoiceSelectListener();
             
-            if (stopTestBtn) {
-                stopTestBtn.addEventListener('click', stopConcurrentTest);
-            }
+            // 加载音色列表
+            loadVoiceList();
             
-            // 绑定Zero-shot复选框事件
-            const zeroShotCheckbox = document.getElementById('zeroShot');
-            if (zeroShotCheckbox) {
-                zeroShotCheckbox.addEventListener('change', toggleZeroShotOptions);
-            }
+            // 初始化标签页切换
+            const tabButtons = document.querySelectorAll('.tab-button');
+            tabButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    const targetTab = this.getAttribute('data-tab');
+                    switchTab(targetTab);
+                });
+            });
             
-            // 绑定高级选项切换事件
-            const advancedToggle = document.querySelector('.advanced-toggle');
-            if (advancedToggle) {
-                advancedToggle.addEventListener('click', toggleAdvanced);
-            }
-            
-            // 获取初始服务器状态
-            fetchServerStatus();
-            
-            // 定期更新服务器状态
-            setInterval(fetchServerStatus, 5000);
+            // 高级选项现在默认显示，根据音色选择自动控制
         });
     </script>
 </body>

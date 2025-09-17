@@ -23,6 +23,113 @@ use web_rwkv::{
     wgpu::{self, Instance},
 };
 
+/// 公开的采样函数，支持传入RNG参数
+pub fn sample_logits(
+    logits: &[f32],
+    args: &SamplerArgs,
+    forbid_token: Option<usize>,
+    rng: &mut Option<StdRng>,
+) -> usize {
+    // 直接实现采样逻辑，避免创建完整的RwkvSampler实例
+    sample_logits_impl(logits, args, forbid_token, rng)
+}
+
+/// 采样逻辑的具体实现 - 修复以匹配Python行为
+fn sample_logits_impl(
+    logits: &[f32],
+    args: &SamplerArgs,
+    forbid_token: Option<usize>,
+    rng: &mut Option<StdRng>,
+) -> usize {
+    let mut logits = logits.to_vec();
+
+    // 应用禁止token
+    if let Some(token) = forbid_token {
+        if token < logits.len() {
+            logits[token] = f32::NEG_INFINITY;
+        }
+    }
+
+    // 先计算softmax概率（与Python一致）
+    let max_logit = logits.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+    let mut probs: Vec<f32> = logits.iter().map(|&x| (x - max_logit).exp()).collect();
+    let sum: f32 = probs.iter().sum();
+    if sum > 0.0 {
+        for p in &mut probs {
+            *p /= sum;
+        }
+    }
+
+    // 应用top_p（与Python顺序一致：先top_p）
+    if args.top_p < 1.0 {
+        let mut sorted_indices: Vec<usize> = (0..probs.len()).collect();
+        sorted_indices.sort_by(|&a, &b| probs[b].partial_cmp(&probs[a]).unwrap());
+
+        let mut cumulative_prob = 0.0;
+        let mut cutoff_index = probs.len();
+        for (i, &idx) in sorted_indices.iter().enumerate() {
+            cumulative_prob += probs[idx];
+            if cumulative_prob >= args.top_p {
+                cutoff_index = i + 1;
+                break;
+            }
+        }
+
+        for (i, &idx) in sorted_indices.iter().enumerate() {
+            if i >= cutoff_index {
+                probs[idx] = 0.0;
+            }
+        }
+    }
+
+    // 应用top_k（与Python顺序一致：后top_k）
+    if args.top_k > 0 && args.top_k < probs.len() {
+        let mut sorted_indices: Vec<usize> = (0..probs.len()).collect();
+        sorted_indices.sort_by(|&a, &b| probs[b].partial_cmp(&probs[a]).unwrap());
+
+        // 将top_k之外的概率设为0
+        for &idx in &sorted_indices[args.top_k..] {
+            probs[idx] = 0.0;
+        }
+    }
+
+    // 应用温度（与Python一致：在概率上应用）
+    if args.temperature > 0.0 && args.temperature != 1.0 {
+        for p in &mut probs {
+            if *p > 0.0 {
+                *p = p.powf(1.0 / args.temperature);
+            }
+        }
+    }
+
+    // 重新归一化概率
+    let sum: f32 = probs.iter().sum();
+    if sum > 0.0 {
+        for p in &mut probs {
+            *p /= sum;
+        }
+    }
+
+    // 采样 - 支持确定性采样
+    let random_value = if let Some(ref mut rng_ref) = rng {
+        rng_ref.gen::<f32>()
+    } else {
+        // 当没有RNG时（如声音克隆场景），使用确定性采样：选择概率最高的token
+        0.0 // 这将选择第一个（概率最高的）token
+    };
+
+    let mut cumulative = 0.0;
+    for (i, &prob) in probs.iter().enumerate() {
+        cumulative += prob;
+        if random_value <= cumulative {
+            return i;
+        }
+    }
+
+    // 如果没有找到合适的token，返回最后一个有效token
+    probs.len() - 1
+}
+
 /// 加载类型枚举
 enum LoadType {
     SafeTensors(Vec<u8>), // 存储原始数据而不是引用
@@ -48,6 +155,37 @@ pub struct SamplerArgs {
     pub max_tokens: usize,
     // 可选随机种子：提供则启用确定性采样
     pub seed: Option<u64>,
+    // 音色保真度控制：0.0-1.0，越高越保持参考音色
+    pub voice_fidelity: f32,
+    // 分层随机性控制
+    pub layered_randomness: LayeredRandomnessConfig,
+}
+
+/// 分层随机性配置
+#[derive(Debug, Clone)]
+pub struct LayeredRandomnessConfig {
+    /// Global阶段的随机性强度 (0.0-1.0)
+    pub global_randomness: f32,
+    /// Semantic阶段的随机性强度 (0.0-1.0)
+    pub semantic_randomness: f32,
+    /// 是否使用独立的种子策略
+    pub use_independent_seeds: bool,
+    /// Global阶段种子偏移
+    pub global_seed_offset: u64,
+    /// Semantic阶段种子偏移
+    pub semantic_seed_offset: u64,
+}
+
+impl Default for LayeredRandomnessConfig {
+    fn default() -> Self {
+        Self {
+            global_randomness: 0.1,   // 大幅降低global阶段随机性，保护音色特征
+            semantic_randomness: 0.4, // 适度降低semantic阶段随机性
+            use_independent_seeds: true,
+            global_seed_offset: 1000,
+            semantic_seed_offset: 2000,
+        }
+    }
 }
 
 impl Default for SamplerArgs {
@@ -56,8 +194,10 @@ impl Default for SamplerArgs {
             temperature: 1.0,
             top_p: 0.85,
             top_k: 0,
-            max_tokens: 100,
+            max_tokens: 2048, // 修复：提高默认值以支持更长的音频生成
             seed: None,
+            voice_fidelity: 0.8, // 默认高音色保真度
+            layered_randomness: LayeredRandomnessConfig::default(),
         }
     }
 }
@@ -68,8 +208,9 @@ pub const TTS_EOS_TOKEN: i32 = 8192;
 pub const TTS_TAG_0: i32 = 8193;
 pub const TTS_TAG_1: i32 = 8194;
 pub const TTS_TAG_2: i32 = 8195;
-pub const GLOBAL_TOKEN_OFFSET: i32 = 8196;
-pub const SEMANTIC_TOKEN_OFFSET: i32 = 4096;
+// 注意：以下偏移量常量已废弃，根据C++代码，tokens应直接使用原始ID
+pub const GLOBAL_TOKEN_OFFSET: i32 = 8196; // Global tokens在prefill时需要偏移
+                                           // pub const SEMANTIC_TOKEN_OFFSET: i32 = 4096; // 已废弃：不再给tokens添加偏移
 
 /// RWKV采样器，用于生成文本和TTS tokens
 pub struct RwkvSampler {
@@ -81,14 +222,9 @@ pub struct RwkvSampler {
 }
 impl RwkvSampler {
     /// 创建默认量化配置
-    /// 对前24层使用Int8量化以节省内存
+    /// 默认不使用量化以提高推理精度
     pub fn default_quant_config() -> HashMap<usize, Quant> {
-        let mut quant_config = HashMap::new();
-        // 对前24层使用Int8量化
-        for layer in 0..24 {
-            quant_config.insert(layer, Quant::Int8);
-        }
-        quant_config
+        HashMap::new() // 返回空配置，不使用量化
     }
 
     /// 创建新的RWKV采样器
@@ -274,6 +410,42 @@ impl RwkvSampler {
         self.rng = seed.map(StdRng::seed_from_u64);
     }
 
+    /// 为特定阶段创建独立的RNG
+    pub fn create_stage_rng(&self, base_seed: Option<u64>, stage_offset: u64) -> Option<StdRng> {
+        base_seed.map(|seed| StdRng::seed_from_u64(seed.wrapping_add(stage_offset)))
+    }
+
+    /// 应用音色保真度调整采样参数
+    pub fn apply_voice_fidelity_adjustment(
+        &self,
+        args: &SamplerArgs,
+        stage_randomness: f32,
+    ) -> SamplerArgs {
+        let mut adjusted_args = args.clone();
+
+        // 根据音色保真度和阶段随机性调整采样参数
+        let fidelity_factor = args.voice_fidelity;
+        let randomness_factor = stage_randomness;
+
+        // 高保真度 + 低随机性 = 更保守的采样
+        let conservative_factor = fidelity_factor * (1.0 - randomness_factor);
+
+        // 调整温度：保真度越高，温度越低
+        adjusted_args.temperature = args.temperature * (0.5 + 0.5 * (1.0 - conservative_factor));
+
+        // 调整top_p：保真度越高，top_p越小（更集中采样）
+        adjusted_args.top_p = args.top_p * (0.7 + 0.3 * (1.0 - conservative_factor));
+
+        // 调整top_k：保真度越高，top_k越小
+        if adjusted_args.top_k > 0 {
+            let reduction_factor = 0.5 + 0.5 * (1.0 - conservative_factor);
+            adjusted_args.top_k =
+                ((adjusted_args.top_k as f32) * reduction_factor).max(1.0) as usize;
+        }
+
+        adjusted_args
+    }
+
     /// 创建独立的推理上下文（复用已加载的模型和tokenizer）
     /// 这样可以避免重新加载模型，同时确保每个上下文有独立的状态
     /// 注意：由于Runtime是trait对象，无法直接clone，需要重新创建
@@ -440,15 +612,113 @@ impl RwkvSampler {
         // === Global 阶段 ===
         let mut global_tokens: Vec<i32> = Vec::new();
         let mut semantic_tokens: Vec<i32> = Vec::new();
-        let mut args_global = args.clone();
-        let mut args_sem = args.clone();
-        // 若未指定top_k（为0），按Python经验值设置：global=20, semantic=80
+
+        // 检查是否有预提取的音色特征
+        let has_ref_audio = _ref_global_tokens.is_some() || _ref_semantic_tokens.is_some();
+
+        // 如果有预提取的音色特征，直接使用它们
+        if has_ref_audio {
+            if let Some(ref_global) = _ref_global_tokens {
+                global_tokens = ref_global.to_vec();
+                println!(
+                    "🎯 [{}] 使用预提取的global tokens: {} 个",
+                    request_id,
+                    global_tokens.len()
+                );
+            }
+            if let Some(ref_semantic) = _ref_semantic_tokens {
+                semantic_tokens = ref_semantic.to_vec();
+                println!(
+                    "🎯 [{}] 使用预提取的semantic tokens: {} 个",
+                    request_id,
+                    semantic_tokens.len()
+                );
+            }
+
+            println!(
+                "✅ [{}] 声音克隆模式：直接使用预提取特征，跳过生成阶段",
+                request_id
+            );
+
+            return Ok((global_tokens, semantic_tokens));
+        }
+
+        // 如果没有预提取特征，则进行正常的生成流程
+        // 设置分层采样参数和独立RNG
+        let mut args_global = if args.layered_randomness.use_independent_seeds {
+            self.apply_voice_fidelity_adjustment(args, args.layered_randomness.global_randomness)
+        } else {
+            args.clone()
+        };
+
+        let mut args_sem = if args.layered_randomness.use_independent_seeds {
+            self.apply_voice_fidelity_adjustment(args, args.layered_randomness.semantic_randomness)
+        } else {
+            args.clone()
+        };
+
+        // 设置默认top_k值
         if args_global.top_k == 0 {
             args_global.top_k = 20;
         }
         if args_sem.top_k == 0 {
             args_sem.top_k = 80;
         }
+
+        // 声音克隆时使用确定性参数
+        if has_ref_audio {
+            println!("🎯 声音克隆模式：使用确定性采样参数确保结果一致性");
+            // 声音克隆时使用固定的确定性参数
+            args_global.temperature = 0.1; // 极低温度确保确定性
+            args_global.top_p = 0.9;
+            args_global.top_k = 1; // 只选择最可能的token
+
+            args_sem.temperature = 0.1; // 极低温度确保确定性
+            args_sem.top_p = 0.9;
+            args_sem.top_k = 1; // 只选择最可能的token
+        } else {
+            // 非声音克隆场景，使用原有的动态调整逻辑
+            let global_fidelity_factor = args.voice_fidelity;
+            let global_randomness_factor = args.layered_randomness.global_randomness;
+            let global_conservative_factor =
+                global_fidelity_factor * (1.0 - global_randomness_factor);
+
+            // Global阶段采用更保守的参数调整
+            args_global.temperature *= (0.3 + 0.7 * (1.0 - global_conservative_factor)).max(0.1);
+            args_global.top_p =
+                (args_global.top_p * (0.8 + 0.2 * global_conservative_factor)).max(0.2);
+            args_global.top_k = ((args_global.top_k as f32)
+                * (0.9 + 0.1 * global_conservative_factor))
+                .max(5.0) as usize;
+
+            // Semantic阶段：控制语音表达，可以适度随机
+            let sem_fidelity_factor = args.voice_fidelity;
+            let sem_randomness_factor = args.layered_randomness.semantic_randomness;
+            let sem_conservative_factor = sem_fidelity_factor * (1.0 - sem_randomness_factor);
+
+            // Semantic阶段保持适度的变化性
+            args_sem.temperature *= (0.6 + 0.4 * (1.0 - sem_conservative_factor)).max(0.2);
+            args_sem.top_p = (args_sem.top_p * (0.75 + 0.25 * sem_conservative_factor)).max(0.15);
+            args_sem.top_k = ((args_sem.top_k as f32) * (0.85 + 0.15 * sem_conservative_factor))
+                .max(10.0) as usize;
+        }
+
+        // 创建独立的RNG用于不同阶段 - 声音克隆时不使用随机数
+        let mut global_rng = if has_ref_audio {
+            None // 声音克隆时不使用随机数生成器
+        } else if args.layered_randomness.use_independent_seeds {
+            self.create_stage_rng(args.seed, args.layered_randomness.global_seed_offset)
+        } else {
+            self.rng.clone()
+        };
+
+        let mut semantic_rng = if has_ref_audio {
+            None // 声音克隆时不使用随机数生成器
+        } else if args.layered_randomness.use_independent_seeds {
+            self.create_stage_rng(args.seed, args.layered_randomness.semantic_seed_offset)
+        } else {
+            self.rng.clone()
+        };
 
         // Python实现固定生成32个global tokens，并且仅在前4096维内采样
         let global_tokens_size: usize = 32;
@@ -490,17 +760,17 @@ impl RwkvSampler {
                     &logits[..10.min(logits.len())]
                 );
             }
-            let next_id = self.sample_logits(&logits[..vocab_global], &args_global, None);
+            let next_id =
+                sample_logits(&logits[..vocab_global], &args_global, None, &mut global_rng);
 
             // 追加到global输出（相对域 [0..4095]）
             global_tokens.push(next_id as i32);
-            // 反馈到模型：+8196（GLOBAL_TOKEN_OFFSET）
-            let feed_id = (next_id as i32 + GLOBAL_TOKEN_OFFSET) as u32;
-            inference.batches[0].push(feed_id);
+            // 反馈到模型：直接使用原始ID（与C++代码一致）
+            inference.batches[0].push(next_id as u32);
             if i < 5 {
                 println!(
-                    "🔍 [{}] 调试信息 - global token {}: {} -> feed_id: {}",
-                    request_id, i, next_id, feed_id
+                    "🔍 [{}] 调试信息 - global token {}: {}",
+                    request_id, i, next_id
                 );
             }
         }
@@ -550,14 +820,7 @@ impl RwkvSampler {
                 }
             }
 
-            let next_id = self.sample_logits(&logits_masked, &args_sem, None);
-            if next_id == TTS_EOS_TOKEN as usize {
-                println!(
-                    "🔍 [{}] 调试信息 - 遇到EOS token，停止生成semantic tokens",
-                    request_id
-                );
-                break;
-            }
+            let next_id = sample_logits(&logits_masked, &args_sem, None, &mut semantic_rng);
 
             // 追加到semantic输出（原始域 [0..8191]）
             semantic_tokens.push(next_id as i32);
@@ -614,7 +877,7 @@ impl RwkvSampler {
             // 关键修复：每个请求前进行彻底的状态重置
             self.reset();
 
-            // 在每个请求前重置采样器状态（如果有RNG状态）
+            // 统一处理种子设置，不区分声音克隆场景
             if let Some(seed) = request.args.seed {
                 self.set_seed(Some(seed));
                 println!("🎲 请求 {} 设置确定性种子: {}", idx + 1, seed);
@@ -665,11 +928,23 @@ impl RwkvSampler {
 
     /// 采样函数 - Nucleus(top-p) + top-k + temperature
     /// forbid_token: 可选禁止采样的token（如某些阶段的特殊符号）
-    fn sample_logits(
+    pub fn sample_logits(
         &mut self,
         logits: &[f32],
         args: &SamplerArgs,
         forbid_token: Option<usize>,
+    ) -> usize {
+        let mut rng_ref = self.rng.clone();
+        self.sample_logits_with_rng(logits, args, forbid_token, &mut rng_ref)
+    }
+
+    /// 使用指定RNG的采样函数
+    pub fn sample_logits_with_rng(
+        &self,
+        logits: &[f32],
+        args: &SamplerArgs,
+        forbid_token: Option<usize>,
+        rng: &mut Option<StdRng>,
     ) -> usize {
         let vocab_size = logits.len();
         if vocab_size == 0 {
@@ -693,7 +968,7 @@ impl RwkvSampler {
         };
         let top_p = args.top_p.clamp(0.0, 1.0);
 
-        // 快速路径：top_k==1或top_p极小，直接取最大logit
+        // 快速路径：top_k==1或top_p极小，直接取最大logit（确定性采样）
         if top_k == 1 || top_p < 1e-4 {
             let mut best = indices[0];
             let mut best_val = f32::NEG_INFINITY;
@@ -766,11 +1041,11 @@ impl RwkvSampler {
         }
 
         // 按概率采样（支持确定性RNG）
-        let r: f32 = if let Some(rng) = &mut self.rng {
-            rng.gen()
+        let r: f32 = if let Some(rng_ref) = rng {
+            rng_ref.gen()
         } else {
-            let mut rng = rand::thread_rng();
-            rng.gen()
+            // 如果没有RNG，创建临时RNG进行随机采样
+            StdRng::from_entropy().gen()
         };
         let mut cumsum = 0.0;
         for (i, &p) in probs.iter().enumerate() {

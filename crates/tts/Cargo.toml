@@ -1,0 +1,37 @@
+[package]
+name = "tts"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = { version = "1.0", features = ["full"] }
+anyhow = "1.0"
+clap = "4.0"
+ndarray = "0.15"
+ort = "1.0"
+hound = "3.5"
+web-rwkv = "0.1"
+safetensors = "0.4"
+half = "2.2"
+serde_json = "1.0"
+rand = "0.8"
+regex = "1.0"
+memmap2 = "0.7"
+wgpu = "0.17"
+chrono = "0.4"
+rustfft = "6.1"
+num = "0.4"
+
+[lib]
+name = "tts"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tts_cli"
+path = "src/tts_cli.rs"
+
+[[bin]]
+name = "interactive_tts_cli"
+path = "src/interactive_tts_cli.rs"

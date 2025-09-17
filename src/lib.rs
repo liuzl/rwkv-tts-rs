@@ -9,6 +9,7 @@ pub mod ref_audio_utilities;
 pub mod rwkv_sampler;
 pub mod tts_state_manager;
 // pub mod tts_pipeline; // 已移动到备份目录
+pub mod tts_pipeline_fixes;
 
 // New concurrent architecture modules
 pub mod global_sampler_manager;
@@ -16,6 +17,19 @@ pub mod onnx_session_pool;
 // pub mod batch_request_scheduler; // 已移动到备份目录
 pub mod dynamic_batch_manager;
 pub mod lightweight_tts_pipeline;
+pub mod voice_feature;
+pub mod voice_feature_manager;
+
+// Refactored batch manager modules
+pub mod batch_types;
+pub mod feature_extractor;
+pub mod sampler_manager;
+pub mod shared_runtime;
+
+// Inference modules
+pub mod normal_mode_inference;
+pub mod zero_shot_inference;
+
 // 新的状态管理架构
 pub use tts_state_manager::{
     TtsInferContext, TtsInferOptions, TtsStateId, TtsStateManager, TtsStateStats,
@@ -77,8 +91,8 @@ pub mod tts_generator {
 
         /// 异步创建新的TTS生成器
         pub async fn new_async(model_path: String, vocab_path: String) -> Result<Self> {
-            // 创建RWKV采样器，使用默认量化配置
-            let quant_config = Some(RwkvSampler::default_quant_config());
+            // 创建RWKV采样器，不使用量化配置
+            let quant_config = None;
             let rwkv_sampler = RwkvSampler::new(&model_path, &vocab_path, quant_config).await?;
 
             Ok(Self {

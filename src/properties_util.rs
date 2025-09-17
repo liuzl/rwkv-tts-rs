@@ -368,7 +368,7 @@ mod tests {
             TTS_SPECIAL_TOKEN_OFFSET + 7,  // 77830 (medium_pitch)
             TTS_SPECIAL_TOKEN_OFFSET + 15, // 77838 (youth-adult)
             TTS_SPECIAL_TOKEN_OFFSET + 46, // 77869 (female)
-            TTS_SPECIAL_TOKEN_OFFSET + 26, // 77849 (NEUTRAL)
+            TTS_SPECIAL_TOKEN_OFFSET + 22, // 77845 (NEUTRAL)
         ];
         assert_eq!(result, expected);
     }
@@ -427,11 +427,11 @@ mod tests {
         // 测试儿童女性极高音分类
         let result = classify_pitch(350.0, "female", 10);
         assert_eq!(result, "very_high_pitch");
-        
+
         // 测试边界值
         let result = classify_pitch(330.0, "female", 10);
         assert_eq!(result, "very_high_pitch");
-        
+
         let result = classify_pitch(329.0, "female", 10);
         assert_eq!(result, "high_pitch");
     }

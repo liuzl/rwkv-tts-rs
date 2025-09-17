@@ -26,12 +26,34 @@ impl OnnxSessionPool {
 
         let mut sessions = Vec::with_capacity(pool_size);
 
+        // 根据CPU核心数动态设置线程数，提升性能
+        let cpu_cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4); // 默认4核
+
+        // 设置合理的线程数：inter_threads控制并行操作数，intra_threads控制单个操作内的并行度
+        let inter_threads = std::cmp::min(cpu_cores / 2, 4); // 最多4个inter线程
+        let intra_threads = std::cmp::max(cpu_cores / 4, 2); // 至少2个intra线程
+
         for _ in 0..pool_size {
-            let session = Session::builder()?
-                .with_inter_threads(1)?
-                .with_intra_threads(1)?
-                .with_optimization_level(GraphOptimizationLevel::Level3)?
-                .commit_from_file(model_path)?;
+            let mut builder =
+                Session::builder()?.with_optimization_level(GraphOptimizationLevel::Level3)?;
+
+            // 在非macOS系统上设置线程数以提升性能
+            #[cfg(not(target_os = "macos"))]
+            {
+                builder = builder
+                    .with_inter_threads(inter_threads)?
+                    .with_intra_threads(intra_threads)?;
+            }
+
+            // macOS系统保持默认设置以避免mutex问题
+            #[cfg(target_os = "macos")]
+            {
+                builder = builder.with_inter_threads(1)?;
+            }
+
+            let session = builder.commit_from_file(model_path)?;
             sessions.push(Arc::new(session));
         }
 
