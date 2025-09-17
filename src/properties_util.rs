@@ -9,7 +9,7 @@ const SPEED_MAP: &[(&str, i32)] = &[
     ("very_slow", 1),
     ("slow", 2),
     ("medium", 3),
-    ("fast", 4),
+    ("fast", 4), 
     ("very_fast", 5),
 ];
 
@@ -86,13 +86,14 @@ pub fn convert_standard_properties_to_tokens(
     let gender_token = get_token_from_map(GENDER_MAP, gender).unwrap_or(46);
     let emotion_token = get_token_from_map(EMOTION_MAP, emotion).unwrap_or(26);
 
+    // 统一属性拼接顺序为: age, gender, emotion, pitch, speed (与Python和C++保持一致)
     vec![
         TTS_SPECIAL_TOKEN_OFFSET,
-        TTS_SPECIAL_TOKEN_OFFSET + speed_token,
-        TTS_SPECIAL_TOKEN_OFFSET + pitch_token,
         TTS_SPECIAL_TOKEN_OFFSET + age_token,
         TTS_SPECIAL_TOKEN_OFFSET + gender_token,
         TTS_SPECIAL_TOKEN_OFFSET + emotion_token,
+        TTS_SPECIAL_TOKEN_OFFSET + pitch_token,
+        TTS_SPECIAL_TOKEN_OFFSET + speed_token,
     ]
 }
 
@@ -362,13 +363,14 @@ mod tests {
             "female",
             "NEUTRAL",
         );
+        // 统一属性拼接顺序为: age, gender, emotion, pitch, speed (与Python和C++保持一致)
         let expected = vec![
             TTS_SPECIAL_TOKEN_OFFSET,      // 77823
-            TTS_SPECIAL_TOKEN_OFFSET + 3,  // 77826 (medium speed)
-            TTS_SPECIAL_TOKEN_OFFSET + 7,  // 77830 (medium_pitch)
             TTS_SPECIAL_TOKEN_OFFSET + 15, // 77838 (youth-adult)
             TTS_SPECIAL_TOKEN_OFFSET + 46, // 77869 (female)
             TTS_SPECIAL_TOKEN_OFFSET + 22, // 77845 (NEUTRAL)
+            TTS_SPECIAL_TOKEN_OFFSET + 7,  // 77830 (medium_pitch)
+            TTS_SPECIAL_TOKEN_OFFSET + 3,  // 77826 (medium speed)
         ];
         assert_eq!(result, expected);
     }
