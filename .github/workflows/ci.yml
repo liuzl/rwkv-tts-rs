@@ -118,8 +118,6 @@ jobs:
       env:
         RUST_BACKTRACE: 1
 
-
-
     - name: Prepare artifact (Windows)
       if: matrix.os == 'windows-latest'
       shell: pwsh
@@ -127,12 +125,14 @@ jobs:
         New-Item -ItemType Directory -Force -Path artifacts
         # Create release directory structure
         New-Item -ItemType Directory -Force -Path release-package
+        # Create assets directory
+        New-Item -ItemType Directory -Force -Path release-package\assets
         # Copy executable
         Copy-Item "target\${{ matrix.target }}\release\${{ matrix.artifact_name }}" "release-package\"
         # Copy onnxruntime.dll
         Copy-Item "assets\ort\onnxruntime.dll" "release-package\"
-        # Copy assets/raf directory
-        Copy-Item -Recurse "assets\raf" "release-package\"
+        # Copy assets/raf directory to assets/raf in release package
+        Copy-Item -Recurse "assets\raf" "release-package\assets\"
         # Create zip package
         Compress-Archive -Path "release-package\*" -DestinationPath "artifacts\${{ matrix.asset_name }}"
 
@@ -142,7 +142,7 @@ jobs:
       run: |
         mkdir -p artifacts
         # Create release directory structure for Linux/macOS
-        mkdir -p release-package
+        mkdir -p release-package/assets
         # Copy executable
         cp target/${{ matrix.target }}/release/rwkvtts_server release-package/
         # Copy ONNX Runtime dynamic library
@@ -151,8 +151,8 @@ jobs:
         elif [ "${{ matrix.os }}" = "macos-latest" ]; then
           cp onnxruntime-osx-x86_64-1.22.0/lib/libonnxruntime.dylib release-package/
         fi
-        # Copy assets/raf directory
-        cp -r assets/raf release-package/
+        # Copy assets/raf directory to assets/raf in release package
+        cp -r assets/raf release-package/assets/
         # Create tar.gz package
         cd release-package
         tar -czf ../artifacts/${{ matrix.asset_name }} .
