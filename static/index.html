@@ -521,6 +521,10 @@
                     <div id="advancedContent" class="advanced-content show">
                         <div class="form-row">
                             <div class="form-group">
+                                <label for="seed" data-i18n="seed">随机种子</label>
+                                <input type="number" id="seed" name="seed" placeholder="留空为随机" data-i18n="seed-placeholder">
+                            </div>
+                            <div class="form-group">
                                 <label for="temperature" data-i18n="temperature">Temperature</label>
                                 <input type="number" id="temperature" name="temperature" value="1.0" min="0.1" max="2.0" step="0.1">
                             </div>
@@ -530,11 +534,13 @@
                             </div>
                             <div class="form-group">
                                 <label for="speed" data-i18n="speed">语速</label>
-                                <input type="number" id="speed" name="speed" value="1.0" min="0.5" max="2.0" step="0.1">
-                            </div>
-                            <div class="form-group">
-                                <label for="seed" data-i18n="seed">随机种子</label>
-                                <input type="number" id="seed" name="seed" placeholder="留空为随机" data-i18n="seed-placeholder">
+                                <select id="speed" name="speed">
+                                    <option value="very_slow" data-i18n="very-slow">很慢</option>
+                                    <option value="slow" data-i18n="slow">慢</option>
+                                    <option value="medium" data-i18n="medium" selected>中速</option>
+                                    <option value="fast" data-i18n="fast">快</option>
+                                    <option value="very_fast" data-i18n="very-fast">很快</option>
+                                </select>
                             </div>
                         </div>
                         <div class="form-row">
@@ -698,9 +704,9 @@
                         </tr>
                         <tr>
                             <td style="border: 1px solid #dee2e6; padding: 8px;">speed</td>
-                            <td style="border: 1px solid #dee2e6; padding: 8px;">float</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;">float/string</td>
                             <td style="border: 1px solid #dee2e6; padding: 8px;" data-i18n="required-no">否</td>
-                            <td style="border: 1px solid #dee2e6; padding: 8px;" data-i18n="speech-speed">语速，默认1.0</td>
+                            <td style="border: 1px solid #dee2e6; padding: 8px;" data-i18n="speech-speed">语速，数值类型默认1.0，字符串类型可选："very_slow", "slow", "medium", "fast", "very_fast"，默认"medium"</td>
                         </tr>
                         <tr>
                             <td style="border: 1px solid #dee2e6; padding: 8px;">seed</td>
@@ -746,6 +752,8 @@
   "temperature": 1.0,
   "top_p": 0.9,
   "speed": 1.0,
+  // 或使用字符串类型
+  // "speed": "medium",
   "age": "youth-adult",
   "gender": "female",
   "emotion": "HAPPY",
@@ -855,7 +863,7 @@
                 text: text,
                 temperature: parseFloat(formData.get('temperature')) || 1.0,
                 top_p: parseFloat(formData.get('topP')) || 0.9,
-                speed: parseFloat(formData.get('speed')) || 1.0,
+                speed: formData.get('speed') || 'medium',
                 seed: seed,
                 age: formData.get('age') || 'youth-adult',
                 gender: formData.get('gender') || 'male',
@@ -1458,6 +1466,11 @@
                 'speed': '语速',
                 'seed': '随机种子',
                 'seed-placeholder': '留空为随机',
+                'very-slow': '很慢',
+                'slow': '慢',
+                'medium': '中速',
+                'fast': '快',
+                'very-fast': '很快',
                 'age': '年龄',
                 'gender': '性别',
                 'emotion': '情感',
@@ -1586,11 +1599,122 @@
                 'speed': 'Speed',
                 'seed': 'Random Seed',
                 'seed-placeholder': 'Leave empty for random',
+                'very-slow': 'Very Slow',
+                'slow': 'Slow',
+                'medium': 'Medium',
+                'fast': 'Fast',
+                'very-fast': 'Very Fast',
                 'age': 'Age',
                 'gender': 'Gender',
                 'emotion': 'Emotion',
                 'pitch': 'Pitch',
                 'generate-btn': '🎵 Generate Speech',
+                'generating': '🔄 Generating...',
+                'loading-text': '🔄 Generating speech, please wait...',
+                'download-audio': '📥 Download audio file',
+                // Age options
+                'child': 'Child',
+                'teenager': 'Teenager',
+                'youth-adult': 'Youth-Adult',
+                'middle-aged': 'Middle-Aged',
+                'elderly': 'Elderly',
+                // Gender options
+                'male': 'Male',
+                'female': 'Female',
+                // Emotion options
+                'unknown': 'Unknown',
+                'neutral': 'Neutral',
+                'angry': 'Angry',
+                'happy': 'Happy',
+                'sad': 'Sad',
+                'fearful': 'Fearful',
+                'disgusted': 'Disgusted',
+                'surprised': 'Surprised',
+                'sarcastic': 'Sarcastic',
+                'excited': 'Excited',
+                'sleepy': 'Sleepy',
+                'confused': 'Confused',
+                'emphasis': 'Emphasis',
+                'laughing': 'Laughing',
+                'singing': 'Singing',
+                'worried': 'Worried',
+                'whisper': 'Whisper',
+                'anxious': 'Anxious',
+                'no-agreement': 'No Agreement',
+                'apologetic': 'Apologetic',
+                'concerned': 'Concerned',
+                'enunciated': 'Enunciated',
+                'assertive': 'Assertive',
+                'encouraging': 'Encouraging',
+                'contempt': 'Contempt',
+                // Pitch options
+                'low-pitch': 'Low Pitch',
+                'medium-pitch': 'Medium Pitch',
+                'high-pitch': 'High Pitch',
+                'very-high-pitch': 'Very High Pitch',
+                // Voice cloning related
+                'upload-audio': 'Upload audio file',
+                'audio-preview': 'Audio preview',
+                'audio-content': 'Audio content',
+                'voice-name': 'Voice name',
+                'extract-voice': 'Extract voice features',
+                'saved-voices': 'Saved voices',
+                'play-btn': 'Play',
+                'pause-btn': 'Pause',
+                'delete-confirm': 'Are you sure to delete this voice?',
+                'delete-btn': 'Delete',
+                'delete-success': '✅ Voice deleted',
+                'delete-failed': 'Deletion failed',
+                'network-error': 'Network error',
+                'audio-content-placeholder': 'Please enter the spoken words in the audio...',
+                'voice-name-placeholder': 'Provide a name for this voice',
+                // File upload area
+                'upload-drop-text': 'Click or drag an audio file here',
+                'upload-hint-text': 'Supported formats: WAV, MP3, Recommended length: 3-30 seconds',
+                // API documentation page
+                'api-title': '📖 API Documentation',
+                'tts-api-title': '🎵 TTS Text to Speech API',
+                'voice-clone-api-title': '🎭 Voice Clone API',
+                'api-endpoint': 'API endpoint：',
+                'request-format': 'Request format：',
+                'request-method': 'Request method：',
+                'request-params': 'Request parameters：',
+                'request-example': 'Request example：',
+                'response-format': 'Response format：',
+                'curl-example': 'cURL example：',
+                'description': 'Description：',
+                'param-name': 'Parameter',
+                'param-type': 'Type',
+                'param-required': 'Required',
+                'param-description': 'Description',
+                'required-yes': 'Yes',
+                'required-no': 'No',
+                'text-content': 'Text to be converted into speech',
+                'sampling-temperature': 'Sampling temperature，默认1.0',
+                'top-p-sampling': 'Top-p sampling, 默认0.9',
+                'speech-speed': 'Speech speed, 默认1.0',
+                'random-seed': 'Random seed (Optional)',
+                'voice-id': 'Voice ID (voice cloning)',
+                'age-options': 'Age：youth-adult, middle-aged, elderly',
+                'gender-options': 'Gender：male, female',
+                'emotion-options': 'Emotion：NEUTRAL, HAPPY, SAD, ANGRY, SURPRISED',
+                'pitch-options': 'Pitch：low_pitch, medium_pitch, high_pitch',
+                'extract-voice-feature': '1. Extract Voice Feature',
+                'get-voice-list': '2. Get Voice List',
+                'delete-voice': '3. Delete Voice',
+                'extract-params': 'audio_file (audio file), prompt (audio content), voice_name (voice name)',
+                'get-all-voices': 'Get the list of saved voices',
+                'delete-voice-desc': 'Delete voice specified with a Voice ID',
+                'extract-voice-title': '1. Extract Voice Feature',
+                'get-voice-list-title': '2. Get Voice List',
+                'delete-voice-title': '3. Delete Voice',
+                'api-params': 'Parameters:',
+                'api-description': 'Description:',
+                'extract-params-desc': 'audio_file (audio file), prompt (audio content), voice_name (voice name)',
+                'get-voice-list-desc': 'Get the list of saved voices',
+                'delete-params-desc': '{"voice_id": "Voice ID"}'
+            },
+            'en': {
                 'generating': '🔄 Generating...',
                 'loading-text': '🔄 Generating speech, please wait...',
                 'download-audio': '📥 Download Audio File',

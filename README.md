@@ -9,6 +9,10 @@
 
 </div>
 
+<div align="center">
+  <p>中文版本 | <a href="README_en.md">English Version</a></p>
+</div>
+
 ## 简介
 
 RWKV TTS Rust 是一个使用 Rust 构建的高性能语音合成实现，基于 RWKV 语言模型，具有以下特点：
@@ -83,6 +87,3 @@ MIT License
 
 ---
 
-<div align="center">
-  <p>中文版本 | <a href="README_en.md">English Version</a></p>
-</div>

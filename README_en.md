@@ -9,6 +9,10 @@
 
 </div>
 
+<div align="center">
+  <p><a href="README.md">中文版本</a> | English Version</p>
+</div>
+
 ## Introduction
 
 RWKV TTS Rust is a high-performance text-to-speech implementation built with Rust, featuring RWKV language models. Key features include:
@@ -83,6 +87,3 @@ MIT License
 
 ---
 
-<div align="center">
-  <p><a href="README.md">中文版本</a> | English Version</p>
-</div>

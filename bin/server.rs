@@ -31,24 +31,19 @@ use rwkv_tts_rs::ref_audio_utilities::RefAudioUtilities;
 use rwkv_tts_rs::voice_feature_manager::{VoiceFeatureManager, VoiceMetadata};
 use web_rwkv::runtime::model::Quant;
 
-/// TTS请求参数
+/// Web UI TTS请求参数（支持字符串类型的speed）
 #[derive(Debug, Deserialize)]
-struct TtsRequest {
+struct WebTtsRequest {
     text: String,
     temperature: Option<f32>,
     top_p: Option<f32>,
-    #[allow(dead_code)]
-    speed: Option<f32>,
-    #[allow(dead_code)]
-    zero_shot: Option<bool>,
-    voice_id: Option<String>, // 音色ID，用于音色克隆
+    speed: Option<serde_json::Value>, // 支持f32或String类型
+    voice_id: Option<String>,
     seed: Option<u64>,
-    // 添加新的高级选项
     age: Option<String>,
     gender: Option<String>,
     emotion: Option<String>,
     pitch: Option<String>,
-    // 添加提示词字段
     prompt_text: Option<String>,
 }
 
@@ -189,312 +184,11 @@ fn get_global_app_state() -> AppState {
     GLOBAL_APP_STATE.get().expect("应用状态未初始化").clone()
 }
 
-/// 处理TTS请求（支持文件上传）
+/// 处理TTS请求
 #[handler]
 async fn handle_tts(req: &mut Request, res: &mut Response) -> Result<(), StatusError> {
-    // 检查是否是multipart请求（文件上传）
-    if req
-        .content_type()
-        .map(|ct| ct.type_() == "multipart")
-        .unwrap_or(false)
-    {
-        // 处理multipart表单数据（包含文件上传）
-        handle_tts_with_file_upload(req, res).await
-    } else {
-        // 处理普通的JSON请求
-        handle_tts_json(req, res).await
-    }
-}
-
-/// 处理带文件上传的TTS请求
-async fn handle_tts_with_file_upload(
-    req: &mut Request,
-    res: &mut Response,
-) -> Result<(), StatusError> {
-    let total_start = std::time::Instant::now();
-
-    // 解析multipart表单数据
-    let parse_start = std::time::Instant::now();
-    req.parse_form::<()>().await.map_err(|e| {
-        error!("表单数据解析失败: {}", e);
-        StatusError::bad_request()
-    })?;
-    let parse_time = parse_start.elapsed();
-
-    // 提取文本和其他参数
-    let text: String = req.form("text").await.unwrap_or_default();
-    let temperature: f32 = req
-        .form("temperature")
-        .await
-        .unwrap_or("1.0".to_string())
-        .parse()
-        .unwrap_or(1.0);
-    let top_p: f32 = req
-        .form("top_p")
-        .await
-        .unwrap_or("0.90".to_string())
-        .parse()
-        .unwrap_or(0.90);
-    let _speed: f32 = req
-        .form("speed")
-        .await
-        .unwrap_or("1.0".to_string())
-        .parse()
-        .unwrap_or(1.0);
-    let zero_shot: bool = req
-        .form("zero_shot")
-        .await
-        .unwrap_or("false".to_string())
-        .parse()
-        .unwrap_or(false);
-    let ref_audio_path: String = req.form("ref_audio_path").await.unwrap_or_default();
-    let voice_id: String = req.form("voice_id").await.unwrap_or_default();
-    let seed_str: String = req.form("seed").await.unwrap_or_default();
-    let seed: Option<u64> = if seed_str.is_empty() {
-        None
-    } else {
-        seed_str.parse().ok()
-    };
-    let age: String = req.form("age").await.unwrap_or("youth-adult".to_string());
-    let gender: String = req.form("gender").await.unwrap_or("male".to_string());
-    let emotion: String = req.form("emotion").await.unwrap_or("NEUTRAL".to_string());
-    let pitch: String = req
-        .form("pitch")
-        .await
-        .unwrap_or("medium_pitch".to_string());
-    let prompt_text: String = req.form("prompt_text").await.unwrap_or_default();
-
-    info!(
-        "🎯 收到TTS请求(带文件上传): text='{}', ref_audio_path='{:?}'",
-        text, ref_audio_path
-    );
-    info!(
-        "  ⏱️  请求解析耗时: {:.2}ms",
-        parse_time.as_secs_f64() * 1000.0
-    );
-
-    // 处理文件上传
-    let uploaded_file_path = if let Some(file) = req.file("refAudioFile").await {
-        // 获取原始文件名和扩展名
-        let original_filename = file.name().unwrap_or("audio");
-        let extension = std::path::Path::new(original_filename)
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or("wav"); // 默认为wav
-
-        // 创建临时目录
-        let temp_dir = std::path::PathBuf::from("assets/raf/temp/upload_temp_files");
-        if let Err(e) = tokio::fs::create_dir_all(&temp_dir).await {
-            error!("创建临时目录失败: {}", e);
-            None
-        } else {
-            // 生成临时文件路径，保持原始扩展名
-            let temp_file_path = temp_dir.join(format!("{}.{}", Uuid::new_v4(), extension));
-
-            // 复制上传文件到临时位置
-            match tokio::fs::copy(file.path(), &temp_file_path).await {
-                Ok(_) => {
-                    info!("  📁 文件上传处理完成: {:?}", temp_file_path);
-                    Some(temp_file_path.to_string_lossy().to_string())
-                }
-                Err(e) => {
-                    error!("保存上传文件失败: {}", e);
-                    None
-                }
-            }
-        }
-    } else {
-        None
-    };
-
-    // 确定最终使用的参考音频路径
-    let final_ref_audio_path = if let Some(ref uploaded_path) = uploaded_file_path {
-        uploaded_path.clone()
-    } else {
-        ref_audio_path
-    };
-
-    // 获取应用状态和创建参数
-    let setup_start = std::time::Instant::now();
-    let app_state = get_global_app_state();
-
-    // 处理音色ID参数
-    let (final_ref_audio_path, use_voice_clone) = if !voice_id.is_empty() {
-        // 使用音色ID加载预存的音色特征
-        match app_state.voice_manager.load_voice_feature(&voice_id).await {
-            Ok(voice_feature) => {
-                info!(
-                    "🎭 使用音色ID: {}, 音色名称: {}",
-                    voice_id, voice_feature.name
-                );
-                // TODO: 需要实现从音色特征生成临时音频文件的逻辑
-                (String::new(), true)
-            }
-            Err(e) => {
-                error!("加载音色特征失败: {}", e);
-                res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(ErrorResponse {
-                    success: false,
-                    error: format!("音色ID '{}' 不存在或加载失败: {}", voice_id, e),
-                }));
-                return Ok(());
-            }
-        }
-    } else {
-        (
-            final_ref_audio_path.clone(),
-            !final_ref_audio_path.is_empty() || zero_shot,
-        )
-    };
-
-    let pipeline_args = LightweightTtsPipelineArgs {
-        text: text.clone(),
-        ref_audio_path: final_ref_audio_path.clone(),
-        zero_shot: use_voice_clone,
-        temperature,
-        top_p,
-        top_k: 100,
-        max_tokens: 8000,
-        seed,
-        // 添加新的高级选项并进行类型转换
-        age,
-        gender,
-        emotion,
-        // 音调和语速需要转换为数值
-        pitch: match pitch.as_str() {
-            "low_pitch" => 150.0,
-            "medium_pitch" => 200.0,
-            "high_pitch" => 250.0,
-            "very_high_pitch" => 300.0,
-            _ => 200.0, // 默认中音调
-        },
-        speed: 4.2, // 默认语速
-        // 添加提示词
-        prompt_text,
-        ..Default::default()
-    };
-    let setup_time = setup_start.elapsed();
-    info!(
-        "  ⏱️  参数设置耗时: {:.2}ms",
-        setup_time.as_secs_f64() * 1000.0
-    );
-
-    // TTS生成（主要处理时间）
-    let tts_start = std::time::Instant::now();
-    let audio_data = match app_state.tts_pipeline.generate_speech(&pipeline_args).await {
-        Ok(data) => data,
-        Err(e) => {
-            error!("生成TTS音频失败: {}", e);
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Json(ErrorResponse {
-                success: false,
-                error: format!("生成TTS音频失败: {}", e),
-            }));
-            return Ok(());
-        }
-    };
-    let tts_time = tts_start.elapsed();
-    info!(
-        "  ⏱️  TTS生成耗时: {:.2}ms",
-        tts_time.as_secs_f64() * 1000.0
-    );
-
-    // 音频格式转换
-    let convert_start = std::time::Instant::now();
-    let wav_data = convert_samples_to_wav(&audio_data, 16000);
-    let convert_time = convert_start.elapsed();
-    info!(
-        "  ⏱️  WAV转换耗时: {:.2}ms",
-        convert_time.as_secs_f64() * 1000.0
-    );
-
-    // Base64编码
-    let encode_start = std::time::Instant::now();
-    let base64_audio = base64::engine::general_purpose::STANDARD.encode(&wav_data);
-    let encode_time = encode_start.elapsed();
-    info!(
-        "  ⏱️  Base64编码耗时: {:.2}ms",
-        encode_time.as_secs_f64() * 1000.0
-    );
-
-    // 计算总体性能指标
-    let total_time = total_start.elapsed();
-    let rtf = calculate_rtf(&audio_data, total_time);
-    let audio_duration = audio_data.len() as f64 / 16000.0;
-
-    info!("📊 TTS请求完成统计:");
-    info!("  ⏱️  总耗时: {:.2}ms", total_time.as_secs_f64() * 1000.0);
-    info!("  🎵 音频时长: {:.2}s", audio_duration);
-    info!("  📈 RTF: {:.3}", rtf);
-    info!("  📦 音频样本数: {}", audio_data.len());
-    info!("  💾 WAV文件大小: {} bytes", wav_data.len());
-    info!("  📝 Base64大小: {} chars", base64_audio.len());
-
-    // 性能分析和优化建议
-    let tts_percentage = tts_time.as_secs_f64() / total_time.as_secs_f64() * 100.0;
-    let convert_percentage = convert_time.as_secs_f64() / total_time.as_secs_f64() * 100.0;
-    let encode_percentage = encode_time.as_secs_f64() / total_time.as_secs_f64() * 100.0;
-
-    info!("🔍 性能分析:");
-    info!("  - TTS生成: {:.1}%", tts_percentage);
-    info!("  - WAV转换: {:.1}%", convert_percentage);
-    info!("  - Base64编码: {:.1}%", encode_percentage);
-    info!(
-        "  - 其他开销: {:.1}%",
-        100.0 - tts_percentage - convert_percentage - encode_percentage
-    );
-
-    if rtf > 0.3 {
-        info!("⚠️  服务器性能提示: RTF > 0.3，建议优化:");
-        if tts_percentage > 90.0 {
-            info!(
-                "   - TTS生成占用{:.1}%时间，主要瓶颈在模型推理",
-                tts_percentage
-            );
-        }
-        if convert_percentage > 5.0 {
-            info!(
-                "   - WAV转换占用{:.1}%时间，考虑优化音频处理",
-                convert_percentage
-            );
-        }
-        if encode_percentage > 5.0 {
-            info!(
-                "   - Base64编码占用{:.1}%时间，考虑流式传输",
-                encode_percentage
-            );
-        }
-    }
-
-    // 构建响应
-    let response_start = std::time::Instant::now();
-    res.render(Json(TtsResponse {
-        success: true,
-        message: "TTS生成成功".to_string(),
-        audio_base64: Some(base64_audio),
-        duration_ms: Some(total_time.as_millis() as u64),
-        rtf: Some(rtf),
-    }));
-    let response_time = response_start.elapsed();
-    info!(
-        "  ⏱️  响应构建耗时: {:.2}ms",
-        response_time.as_secs_f64() * 1000.0
-    );
-
-    // 清理上传的临时文件
-    if let Some(uploaded_path) = uploaded_file_path {
-        tokio::spawn(async move {
-            // 等待一段时间后删除临时文件
-            tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
-            if let Err(e) = tokio::fs::remove_file(&uploaded_path).await {
-                warn!("删除临时文件失败: {}: {}", uploaded_path, e);
-            } else {
-                info!("临时文件已清理: {}", uploaded_path);
-            }
-        });
-    }
-
-    Ok(())
+    // 直接处理JSON请求，不再支持文件上传
+    handle_tts_json(req, res).await
 }
 
 /// 提取音频特征
@@ -758,7 +452,7 @@ async fn handle_tts_json(req: &mut Request, res: &mut Response) -> Result<(), St
 
     // 1. 解析JSON请求
     let parse_start = std::time::Instant::now();
-    let tts_request: TtsRequest = match req.parse_json().await {
+    let web_tts_request: WebTtsRequest = match req.parse_json().await {
         Ok(request) => request,
         Err(e) => {
             error!("JSON解析失败: {}", e);
@@ -774,7 +468,7 @@ async fn handle_tts_json(req: &mut Request, res: &mut Response) -> Result<(), St
 
     info!(
         "🎯 收到TTS请求: text='{}', voice_id='{:?}'",
-        tts_request.text, tts_request.voice_id
+        web_tts_request.text, web_tts_request.voice_id
     );
     info!(
         "  ⏱️  请求解析耗时: {:.2}ms",
@@ -787,7 +481,7 @@ async fn handle_tts_json(req: &mut Request, res: &mut Response) -> Result<(), St
 
     // 处理音色ID参数
     let (_use_voice_clone, voice_feature, prompt_text_from_voice) =
-        if let Some(voice_id) = &tts_request.voice_id {
+        if let Some(voice_id) = &web_tts_request.voice_id {
             if !voice_id.is_empty() {
                 // 使用音色ID加载预存的音色特征
                 match app_state.voice_manager.load_voice_feature(voice_id).await {
@@ -824,34 +518,56 @@ async fn handle_tts_json(req: &mut Request, res: &mut Response) -> Result<(), St
     let final_prompt_text = if let Some(prompt_text) = prompt_text_from_voice {
         prompt_text
     } else {
-        tts_request.prompt_text.clone().unwrap_or_default()
+        web_tts_request.prompt_text.clone().unwrap_or_default()
     };
 
     // zero-shot模式只基于voice_id判断
-    let zero_shot_mode = tts_request.voice_id.is_some();
+    let zero_shot_mode = web_tts_request.voice_id.is_some();
+
+    // 处理speed参数，支持字符串和数值类型
+    let speed_value = match &web_tts_request.speed {
+        Some(speed) => {
+            // 尝试解析为字符串
+            if let Ok(speed_str) = serde_json::from_value::<String>(speed.clone()) {
+                // 根据字符串值映射到数值
+                match speed_str.as_str() {
+                    "very_slow" => 3.0,
+                    "slow" => 3.8,
+                    "medium" => 4.2,
+                    "fast" => 4.7,
+                    "very_fast" => 5.0,
+                    _ => 4.2, // 默认值
+                }
+            } else {
+                // 尝试解析为f32
+                serde_json::from_value::<f32>(speed.clone()).unwrap_or(4.2)
+            }
+        }
+        None => 4.2, // 默认语速
+    };
 
     let pipeline_args = LightweightTtsPipelineArgs {
-        text: tts_request.text.clone(),
+        text: web_tts_request.text.clone(),
         ref_audio_path: String::new(), // 不再支持ref_audio_path
         zero_shot: zero_shot_mode,
-        temperature: tts_request.temperature.unwrap_or(1.0),
-        top_p: tts_request.top_p.unwrap_or(0.90),
+        temperature: web_tts_request.temperature.unwrap_or(1.0),
+        top_p: web_tts_request.top_p.unwrap_or(0.90),
         top_k: 100,
         max_tokens: 8000,
-        seed: tts_request.seed,
+        seed: web_tts_request.seed,
         // 添加新的高级选项并进行类型转换
-        age: tts_request.age.unwrap_or("youth-adult".to_string()),
-        gender: tts_request.gender.unwrap_or("male".to_string()),
-        emotion: tts_request.emotion.unwrap_or("NEUTRAL".to_string()),
+        age: web_tts_request.age.unwrap_or("youth-adult".to_string()),
+        gender: web_tts_request.gender.unwrap_or("male".to_string()),
+        emotion: web_tts_request.emotion.unwrap_or("NEUTRAL".to_string()),
         // 音调和语速需要转换为数值
-        pitch: match tts_request.pitch.as_deref() {
+        pitch: match web_tts_request.pitch.as_deref() {
             Some("low_pitch") => 150.0,
             Some("medium_pitch") => 200.0,
             Some("high_pitch") => 250.0,
             Some("very_high_pitch") => 300.0,
             _ => 200.0, // 默认中音调
         },
-        speed: 4.2, // 默认语速
+        speed: speed_value, // 使用处理后的speed值
         // 添加提示词
         prompt_text: final_prompt_text,
         // 如果有音色特征，传入tokens并转换为i64类型

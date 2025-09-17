@@ -17,6 +17,24 @@
       "file_path": "assets\\raf\\voice_20250916_131005_1b8dd3b5.raf.json",
       "file_size": 8322,
       "checksum": "228958934868925911af06766457e9bd8139c99a1183197aabaddf3652d67147"
+    },
+    {
+      "id": "voice_20250917_145617_01a1d3e7",
+      "name": "liuying",
+      "prompt_text": "夜色渐深，萤火点点如星辰坠落人间，我守护着这篇宁静的夜，为迷途的旅人指引方向。光明与黑暗交织之处，总有我微弱却永恒的光茫相伴。让我们共同守护这片宁静吧！",
+      "created_at": "2025-09-17T14:56:17.089077200Z",
+      "file_path": "assets/raf\\voice_20250917_145617_01a1d3e7.raf.json",
+      "file_size": 9044,
+      "checksum": "947742fa751633ffcc1ae069d164c0974902eb3de7b4eac10bc97d71326b50bf"
+    },
+    {
+      "id": "voice_20250917_150114_4103e64d",
+      "name": "paimeng",
+      "prompt_text": "派蒙觉得这里的食物真是太香啦！快看快看，那边还有好多新鲜的水果呢！虽然派蒙已经吃的很饱了，不过再来一个甜甜的苹果应该没问题吧？旅行者，我们去买一个吧！",
+      "created_at": "2025-09-17T15:01:14.323949100Z",
+      "file_path": "assets/raf\\voice_20250917_150114_4103e64d.raf.json",
+      "file_size": 7673,
+      "checksum": "f042f0098db590ddc6c1311e06d7eea9ae7ae9aad4793c03fee6dfb2ad200e88"
     }
   ]
 }
