@@ -1367,7 +1367,7 @@ async fn download_models_from_hf() -> Result<()> {
         "tokenizer.json",
         "BiCodecTokenize.onnx",
         "wav2vec2-large-xlsr-53.onnx",
-        "BiCodecDetokenize_static_qdq.onnx",
+        "BiCodecDetokenize.onnx",
     ];
 
     for filename in files_to_download {
@@ -1709,7 +1709,7 @@ async fn main() -> Result<()> {
         .push(Router::with_path("/api/tts").post(handle_tts))
         .push(Router::with_path("/api/voice-clone/extract").post(handle_voice_extract))
         .push(Router::with_path("/api/voice-clone/list").get(handle_voice_list))
-        .push(Router::with_path("/api/voice-clone/delete").delete(handle_voice_delete))
+        .push(Router::with_path("/api/voice-clone/delete").post(handle_voice_delete))
         .push(Router::with_path("{*path}").get(handle_static_files));
 
     // 注意：现在静态文件已嵌入到二进制文件中，不再依赖外部static目录
