@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use web_rwkv::runtime::infer::{RnnInput, RnnInputBatch, RnnOption};
 
 use crate::shared_runtime::TtsInferContext;
@@ -160,18 +160,12 @@ pub async fn execute_zero_shot_inference(
     } else {
         // 即使rng为None，也创建新的RNG用于随机采样（除非用户明确指定seed）
         if let Some(seed) = request.args.seed {
-            info!(
-                "🎯 [{}] 声音克隆模式：使用确定性采样（seed={}）",
-                request_id, seed
-            );
+
             Some(StdRng::seed_from_u64(seed.wrapping_add(
                 request.args.layered_randomness.semantic_seed_offset,
             )))
         } else {
-            info!(
-                "🎯 [{}] 声音克隆模式：使用随机采样（支持top-p、top-k参数）",
-                request_id
-            );
+
             Some(StdRng::from_entropy())
         }
     };
@@ -209,24 +203,6 @@ pub async fn execute_zero_shot_inference(
             }
         }
 
-        // 注意：不屏蔽EOS token，让它能够被正常采样以终止生成
-
-        // 添加调试日志：输出EOS token的logits值
-        let eos_logit = if (crate::rwkv_sampler::TTS_EOS_TOKEN as usize) < logits_masked.len() {
-            logits_masked[crate::rwkv_sampler::TTS_EOS_TOKEN as usize]
-        } else {
-            f32::NEG_INFINITY
-        };
-
-        // 计算最大logits值用于对比
-        let max_logit = logits_masked
-            .iter()
-            .fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-
-        info!(
-            "🔍 [{}] Zero-shot Step {}: EOS logit = {:.3}, Max logit = {:.3}",
-            request_id, i, eos_logit, max_logit
-        );
 
         // 直接使用屏蔽后的logits进行采样
         let next_id = crate::rwkv_sampler::sample_logits(
@@ -236,27 +212,10 @@ pub async fn execute_zero_shot_inference(
             &mut semantic_rng,
         );
 
-        info!(
-            "🔍 [{}] Zero-shot Step {}: Sampled token = {}",
-            request_id, i, next_id
-        );
 
         // 检查是否遇到EOS token（必须在范围检查之前）
         if next_id == crate::rwkv_sampler::TTS_EOS_TOKEN as usize {
-            info!(
-                "🔍 [{}] Zero-shot模式遇到EOS token({}), 停止生成",
-                request_id, next_id
-            );
             break;
-        }
-
-        // 安全转换：确保token在有效范围内
-        if next_id > i32::MAX as usize {
-            warn!(
-                "🚨 [{}] Token {} 超出i32范围，跳过此token",
-                request_id, next_id
-            );
-            continue;
         }
 
         // 额外检查：确保token在semantic范围内 [0..8192)（修复：应该是>8192而不是>=8192）
@@ -273,24 +232,6 @@ pub async fn execute_zero_shot_inference(
         // 反馈到模型：语义阶段直接使用原始token（不加偏移）
         inference.batches[0].push(next_id as u32);
     }
-
-    info!(
-        "✅ [{}] Zero-shot生成完成: 使用预提取global tokens: {} 个, 新生成semantic tokens: {} 个",
-        request_id,
-        global_tokens.len(),
-        semantic_tokens.len()
-    );
-
-    // 注意：在prefill阶段我们包含了预读取的semantic tokens用于上下文，
-    // 但在返回结果时，我们只返回新生成的semantic tokens，
-    // 因为预读取的semantic tokens不应该参与最终的语音合成输出
-    info!(
-        "🔧 [{}] 返回结果: global tokens {} 个（预提取），semantic tokens {} 个（新生成，已排除预读取部分）",
-        request_id,
-        global_tokens.len(),
-        semantic_tokens.len()
-    );
-
     // 返回预提取的global tokens和新生成的semantic tokens（已排除预读取的semantic tokens）
     Ok((global_tokens, semantic_tokens))
 }

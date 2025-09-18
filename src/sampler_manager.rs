@@ -131,6 +131,7 @@ impl SamplerManager {
         // 验证参数
         self.validate_params(&params)?;
 
+        #[cfg(debug_assertions)]
         debug!("📊 解析采样参数: {:?}", params);
         Ok(params)
     }
@@ -223,6 +224,7 @@ impl SamplerManager {
             }
         };
 
+        #[cfg(debug_assertions)]
         debug!("🎲 采样结果: token={}", token);
         Ok(token)
     }

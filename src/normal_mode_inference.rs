@@ -209,6 +209,7 @@ pub async fn execute_normal_inference(
         // 反馈到模型：直接使用原始ID（与C++代码一致）
         inference.batches[0].push(next_id as u32);
 
+        #[cfg(debug_assertions)]
         debug!(
             "🔍 [{}] Global token {}: 采样={}, 反馈={}",
             request_id, i, next_id, next_id
@@ -288,15 +289,6 @@ pub async fn execute_normal_inference(
             f32::NEG_INFINITY
         };
 
-        // 计算最大logits值用于对比
-        let max_logit = logits_masked
-            .iter()
-            .fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-
-        info!(
-            "🔍 [{}] Normal Step {}: EOS logit = {:.3}, Max logit = {:.3}",
-            request_id, i, eos_logit, max_logit
-        );
 
         // 直接使用屏蔽后的logits进行采样
         let next_id = crate::rwkv_sampler::sample_logits(
@@ -306,10 +298,6 @@ pub async fn execute_normal_inference(
             &mut semantic_rng,
         );
 
-        info!(
-            "🔍 [{}] Normal Step {}: Sampled token = {}",
-            request_id, i, next_id
-        );
 
         // 检查是否遇到EOS token（必须在范围检查之前）
         if next_id == crate::rwkv_sampler::TTS_EOS_TOKEN as usize {
@@ -320,14 +308,6 @@ pub async fn execute_normal_inference(
             break;
         }
 
-        // 安全转换：确保token在有效范围内
-        if next_id > i32::MAX as usize {
-            warn!(
-                "🚨 [{}] Token {} 超出i32范围，跳过此token",
-                request_id, next_id
-            );
-            continue;
-        }
 
         // 额外检查：确保token在semantic范围内 [0..8192)（修复：应该是>8192而不是>=8192）
         if next_id > crate::rwkv_sampler::TTS_EOS_TOKEN as usize {
@@ -344,16 +324,6 @@ pub async fn execute_normal_inference(
         inference.batches[0].push(next_id as u32);
     }
 
-    info!(
-        "✅ [{}] 生成完成: global tokens: {} 个, semantic tokens: {} 个",
-        request_id,
-        global_tokens.len(),
-        semantic_tokens.len()
-    );
-    info!(
-        "🔍 [{}] 最终结果: global_tokens={:?}, semantic_tokens={:?}",
-        request_id, global_tokens, semantic_tokens
-    );
 
     Ok((global_tokens, semantic_tokens))
 }
