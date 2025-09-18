@@ -7,6 +7,21 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 
+/// 池监控报告
+#[derive(Debug, Clone)]
+pub struct PoolMonitoringReport {
+    /// 总内存使用量（字节）
+    pub total_memory_usage: usize,
+    /// 整体命中率
+    pub overall_hit_rate: f32,
+    /// 平均使用率
+    pub average_utilization: f32,
+    /// 各池效率评分
+    pub efficiency_scores: Vec<(String, f32)>,
+    /// 详细统计信息
+    pub pool_stats: std::collections::HashMap<String, PoolStats>,
+}
+
 /// Vec对象池统计信息
 #[derive(Debug, Default, Clone)]
 pub struct PoolStats {
@@ -20,6 +35,12 @@ pub struct PoolStats {
     pub current_pool_size: usize,
     /// 峰值池大小
     pub peak_pool_size: usize,
+    /// 池使用率（当前大小/最大大小）
+    pub utilization_rate: f32,
+    /// 平均Vec容量
+    pub avg_vec_capacity: f32,
+    /// 内存使用量估算（字节）
+    pub estimated_memory_usage: usize,
 }
 
 impl PoolStats {
@@ -29,6 +50,32 @@ impl PoolStats {
             0.0
         } else {
             self.pool_hits as f32 / self.total_allocations as f32
+        }
+    }
+
+    /// 计算池效率（综合命中率和使用率）
+    pub fn efficiency_score(&self) -> f32 {
+        let hit_rate = self.hit_rate();
+        let utilization = self.utilization_rate;
+        // 平衡命中率和使用率，避免过度缓存
+        (hit_rate * 0.7 + utilization * 0.3).min(1.0)
+    }
+
+    /// 检查是否需要调整池大小
+    pub fn needs_resize(&self) -> Option<bool> {
+        if self.total_allocations < 100 {
+            return None; // 样本不足
+        }
+
+        // 使用率过低且命中率不高，建议缩小
+        if self.utilization_rate < 0.3 && self.hit_rate() < 0.5 {
+            Some(false) // 建议缩小
+        }
+        // 使用率很高且命中率高，建议扩大
+        else if self.utilization_rate > 0.8 && self.hit_rate() > 0.7 {
+            Some(true) // 建议扩大
+        } else {
+            None // 保持当前大小
         }
     }
 
@@ -115,9 +162,36 @@ impl<T> VecPool<T> {
 
     /// 获取统计信息
     pub fn get_stats(&self) -> PoolStats {
-        let mut stats = self.stats.lock().unwrap().clone();
-        stats.current_pool_size = self.current_size.load(Ordering::Relaxed);
-        stats
+        let stats = self.stats.lock().unwrap();
+        let pool = self.pool.lock().unwrap();
+
+        let current_size = pool.len();
+        let utilization_rate = if self.max_pool_size > 0 {
+            current_size as f32 / self.max_pool_size as f32
+        } else {
+            0.0
+        };
+
+        // 计算平均容量和内存使用量
+        let (avg_capacity, memory_usage) = if !pool.is_empty() {
+            let total_capacity: usize = pool.iter().map(|v| v.capacity()).sum();
+            let avg_cap = total_capacity as f32 / pool.len() as f32;
+            let memory = total_capacity * std::mem::size_of::<T>();
+            (avg_cap, memory)
+        } else {
+            (0.0, 0)
+        };
+
+        PoolStats {
+            total_allocations: stats.total_allocations,
+            pool_hits: stats.pool_hits,
+            pool_misses: stats.pool_misses,
+            current_pool_size: current_size,
+            peak_pool_size: stats.peak_pool_size,
+            utilization_rate,
+            avg_vec_capacity: avg_capacity,
+            estimated_memory_usage: memory_usage,
+        }
     }
 
     /// 清空池
@@ -230,13 +304,17 @@ impl Default for GlobalVecPools {
 }
 
 impl GlobalVecPools {
-    /// 创建新的全局Vec池集合
+    /// 创建新的全局Vec池集合（针对TTS场景优化）
     pub fn new() -> Self {
         Self {
-            f32_pool: VecPool::new(100),
-            usize_pool: VecPool::new(100),
-            u32_pool: VecPool::new(100),
-            i32_pool: VecPool::new(100),
+            // TTS场景中f32向量使用最频繁（logits、概率等），增大池容量
+            f32_pool: VecPool::new(500),
+            // 索引向量也较常用，适中容量
+            usize_pool: VecPool::new(200),
+            // token序列使用频繁，增大容量
+            u32_pool: VecPool::new(300),
+            // 其他整数向量使用较少
+            i32_pool: VecPool::new(150),
         }
     }
 
@@ -280,12 +358,16 @@ impl GlobalVecPools {
         self.i32_pool.return_vec(vec);
     }
 
-    /// 预热所有池
+    /// 预热所有池（针对TTS场景优化）
     pub fn warm_up(&self) {
-        self.f32_pool.warm_up(20, 1024);
-        self.usize_pool.warm_up(20, 1024);
-        self.u32_pool.warm_up(20, 512);
-        self.i32_pool.warm_up(20, 512);
+        // TTS场景中logits向量通常较大（词汇表大小），预热更大容量
+        self.f32_pool.warm_up(50, 65536); // 64K词汇表
+                                          // 索引向量通常较小
+        self.usize_pool.warm_up(30, 1024);
+        // token序列长度适中
+        self.u32_pool.warm_up(40, 2048);
+        // 其他向量较小
+        self.i32_pool.warm_up(25, 512);
     }
 
     /// 获取所有池的统计信息
@@ -296,6 +378,40 @@ impl GlobalVecPools {
         stats.insert("u32".to_string(), self.u32_pool.get_stats());
         stats.insert("i32".to_string(), self.i32_pool.get_stats());
         stats
+    }
+
+    /// 获取综合监控报告
+    pub fn get_monitoring_report(&self) -> PoolMonitoringReport {
+        let all_stats = self.get_all_stats();
+
+        let mut total_memory = 0;
+        let mut total_allocations = 0;
+        let mut total_hits = 0;
+        let mut avg_utilization = 0.0;
+        let mut efficiency_scores = Vec::new();
+
+        for (pool_type, stats) in &all_stats {
+            total_memory += stats.estimated_memory_usage;
+            total_allocations += stats.total_allocations;
+            total_hits += stats.pool_hits;
+            avg_utilization += stats.utilization_rate;
+            efficiency_scores.push((pool_type.clone(), stats.efficiency_score()));
+        }
+
+        avg_utilization /= all_stats.len() as f32;
+        let overall_hit_rate = if total_allocations > 0 {
+            total_hits as f32 / total_allocations as f32
+        } else {
+            0.0
+        };
+
+        PoolMonitoringReport {
+            total_memory_usage: total_memory,
+            overall_hit_rate,
+            average_utilization: avg_utilization,
+            efficiency_scores,
+            pool_stats: all_stats,
+        }
     }
 
     /// 清空所有池

@@ -30,7 +30,7 @@ impl Default for SamplingConfig {
             top_p: 0.9,
             top_k: 50,
             use_fast_path: true,
-            fast_path_threshold: 0.9,
+            fast_path_threshold: 0.7,
             use_simd: cfg!(target_arch = "x86_64"),
         }
     }
@@ -105,7 +105,7 @@ impl FastSampler {
         self.total_samples.fetch_add(1, Ordering::Relaxed);
 
         // 快速路径1：确定性采样（温度极低或top_k=1）
-        if config.temperature < 0.01 || config.top_k == 1 {
+        if config.temperature < 0.1 || config.top_k == 1 {
             let result = self.deterministic_sample(logits, forbid_token);
             self.fast_path_hits.fetch_add(1, Ordering::Relaxed);
             self.deterministic_samples.fetch_add(1, Ordering::Relaxed);
@@ -182,7 +182,7 @@ impl FastSampler {
             f32::INFINITY
         };
 
-        if dominance_ratio > 3.0 {
+        if dominance_ratio > 2.0 {
             // 单峰分布，直接返回最大值
             return Some(max_idx);
         }

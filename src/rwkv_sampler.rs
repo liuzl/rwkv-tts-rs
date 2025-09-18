@@ -1057,7 +1057,20 @@ impl RwkvSampler {
         // Start performance monitoring
         let start_time = std::time::Instant::now();
 
-        // TODO: 实现采样结果缓存（当前LogitsCache用于缓存logits向量）
+        // 生成缓存键，基于采样参数和logits内容
+        let cache_key = self.generate_cache_key(logits, args, forbid_token);
+
+        // 检查缓存是否命中
+        if let Some(cached_logits) = self.logits_cache.get(&cache_key) {
+            // 缓存命中，直接使用缓存的logits进行采样
+            self.performance_monitor.record_cache_hit();
+            let result =
+                self.sample_from_cached_logits(&cached_logits, args, forbid_token, rng, start_time);
+            return result;
+        }
+
+        // 缓存未命中，记录统计信息
+        self.performance_monitor.record_cache_miss();
 
         // Try fast path first
         let sampling_config = SamplingConfig {
@@ -1208,10 +1221,183 @@ impl RwkvSampler {
         }
         let result = *indices.last().unwrap_or(&0);
 
+        // 将采样结果存入缓存
+        self.logits_cache.insert(cache_key, logits.to_vec());
+
         // Record sampling time
         self.performance_monitor
             .record_sampling_latency(start_time.elapsed());
 
+        result
+    }
+
+    /// 生成缓存键，基于采样参数和logits内容
+    fn generate_cache_key(
+        &self,
+        logits: &[f32],
+        args: &SamplerArgs,
+        forbid_token: Option<usize>,
+    ) -> crate::logits_cache::CacheKey {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+
+        // 对采样参数进行哈希
+        args.temperature.to_bits().hash(&mut hasher);
+        args.top_p.to_bits().hash(&mut hasher);
+        args.top_k.hash(&mut hasher);
+        forbid_token.hash(&mut hasher);
+
+        // 对logits内容进行采样哈希（避免完整哈希的性能开销）
+        let step = (logits.len() / 32).max(1);
+        for (i, &logit) in logits.iter().enumerate().step_by(step) {
+            logit.to_bits().hash(&mut hasher);
+            i.hash(&mut hasher);
+        }
+
+        let logits_hash = hasher.finish();
+
+        crate::logits_cache::CacheKey {
+            token_sequence_hash: logits_hash,
+            context_length: logits.len(),
+            state_hash: None,
+        }
+    }
+
+    /// 从缓存的logits进行采样
+    fn sample_from_cached_logits(
+        &self,
+        cached_logits: &[f32],
+        args: &SamplerArgs,
+        forbid_token: Option<usize>,
+        rng: &mut Option<StdRng>,
+        start_time: std::time::Instant,
+    ) -> usize {
+        // 使用与正常采样相同的逻辑，但跳过logits计算
+        let vocab_size = cached_logits.len();
+        if vocab_size == 0 {
+            return 0;
+        }
+
+        // Use VecPool for optimized memory allocation
+        let mut indices = global_vec_pools().get_usize_vec(vocab_size);
+        if let Some(ft) = forbid_token {
+            for i in 0..vocab_size {
+                if i != ft {
+                    indices.push(i);
+                }
+            }
+        } else {
+            indices.extend(0..vocab_size);
+        }
+        if indices.is_empty() {
+            return 0;
+        }
+
+        let temperature = args.temperature.max(0.1);
+        let top_k = if args.top_k == 0 || args.top_k > indices.len() {
+            indices.len()
+        } else {
+            args.top_k
+        };
+        let top_p = args.top_p.clamp(0.0, 1.0);
+
+        // 快速路径：top_k==1或top_p极小，直接取最大logit（确定性采样）
+        if top_k == 1 || top_p < 1e-4 {
+            let mut best = indices[0];
+            let mut best_val = f32::NEG_INFINITY;
+            for &i in &indices {
+                let v = cached_logits[i];
+                if v > best_val {
+                    best_val = v;
+                    best = i;
+                }
+            }
+            self.performance_monitor
+                .record_sampling_latency(start_time.elapsed());
+            return best;
+        }
+
+        // 按logits降序排序
+        indices.sort_by(|&a, &b| {
+            cached_logits[b]
+                .partial_cmp(&cached_logits[a])
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        if top_k < indices.len() {
+            indices.truncate(top_k);
+        }
+
+        // 数值稳定的 softmax
+        let inv_t = 1.0 / temperature;
+        let mut probs = self.vec_pool.get();
+        let mut max_scaled = f32::NEG_INFINITY;
+
+        for &i in &indices {
+            let scaled = cached_logits[i] * inv_t;
+            if scaled > max_scaled {
+                max_scaled = scaled;
+            }
+            probs.push(scaled);
+        }
+
+        for p in &mut probs {
+            *p = ((*p - max_scaled).clamp(-80.0, 80.0)).exp();
+        }
+        let mut sum: f32 = probs.iter().sum();
+        if sum > 0.0 && sum.is_finite() {
+            for p in &mut probs {
+                *p /= sum;
+            }
+        } else {
+            let uniform = 1.0 / (probs.len() as f32).max(1.0);
+            probs.fill(uniform);
+        }
+
+        // top-p截断
+        if top_p < 1.0 {
+            let mut cumsum = 0.0;
+            let mut cutoff = probs.len();
+            for (i, &p) in probs.iter().enumerate() {
+                cumsum += p;
+                if cumsum >= top_p {
+                    cutoff = i + 1;
+                    break;
+                }
+            }
+            if cutoff < probs.len() {
+                probs.truncate(cutoff);
+                indices.truncate(cutoff);
+            }
+            sum = probs.iter().sum();
+            if sum > 0.0 && sum.is_finite() {
+                for p in &mut probs {
+                    *p /= sum;
+                }
+            }
+        }
+
+        // 按概率采样
+        let r: f32 = if let Some(rng_ref) = rng {
+            rng_ref.gen()
+        } else {
+            StdRng::from_entropy().gen()
+        };
+        let mut cumsum = 0.0;
+        for (i, &p) in probs.iter().enumerate() {
+            cumsum += p;
+            if r <= cumsum {
+                let result = indices[i];
+                self.performance_monitor
+                    .record_sampling_latency(start_time.elapsed());
+                return result;
+            }
+        }
+
+        let result = *indices.last().unwrap_or(&0);
+        self.performance_monitor
+            .record_sampling_latency(start_time.elapsed());
         result
     }
 }
