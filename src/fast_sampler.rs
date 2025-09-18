@@ -54,10 +54,11 @@ pub struct FastSamplerStats {
 impl FastSamplerStats {
     /// 计算快速路径命中率
     pub fn fast_path_hit_rate(&self) -> f32 {
-        if self.total_samples == 0 {
+        let total = self.total_samples + self.fast_path_hits;
+        if total == 0 {
             0.0
         } else {
-            self.fast_path_hits as f32 / self.total_samples as f32
+            self.fast_path_hits as f32 / total as f32
         }
     }
 
@@ -101,8 +102,6 @@ impl FastSampler {
         if !config.use_fast_path || logits.is_empty() {
             return None;
         }
-
-        self.total_samples.fetch_add(1, Ordering::Relaxed);
 
         // 快速路径1：确定性采样（温度极低或top_k=1）
         if config.temperature < 0.1 || config.top_k == 1 {
@@ -321,7 +320,7 @@ impl FastSampler {
         None // 非x86_64平台不支持SIMD优化
     }
 
-    /// 完整的优化采样（当快速路径失败时使用）
+    /// 完整的优化采样（首先尝试快速路径，失败时使用完整采样）
     pub fn optimized_sample(
         &self,
         logits: &[f32],
@@ -329,11 +328,17 @@ impl FastSampler {
         forbid_token: Option<usize>,
         rng: &mut Option<StdRng>,
     ) -> usize {
-        self.total_samples.fetch_add(1, Ordering::Relaxed);
-
         if logits.is_empty() {
             return 0;
         }
+
+        // 首先尝试快速路径
+        if let Some(result) = self.try_fast_path(logits, config, forbid_token) {
+            return result;
+        }
+
+        // 快速路径失败，使用完整采样
+        self.total_samples.fetch_add(1, Ordering::Relaxed);
 
         // 构建有效索引列表
         let mut valid_indices = Vec::new();
