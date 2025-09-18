@@ -74,7 +74,7 @@ impl VoiceFeatureManager {
             fs::create_dir_all(&raf_dir)?;
         }
 
-        // 确保temp目录存在
+        // 确保目录存在
         let temp_dir = raf_dir.join("temp");
         if !temp_dir.exists() {
             fs::create_dir_all(&temp_dir)?;

@@ -80,16 +80,18 @@ impl OnnxSessionPool {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to acquire session: {}", e))?;
 
-        // 从空闲栈中弹出一个可用索引（与许可数量一致，理论上必然存在）
+        // 优化：减少锁持有时间，快速获取索引后立即释放锁
         let index = {
             let mut stack = self
                 .inner
                 .free_indices
                 .lock()
                 .map_err(|_| anyhow::anyhow!("Poisoned mutex in OnnxSessionPool"))?;
-            stack
+            let idx = stack
                 .pop()
-                .ok_or_else(|| anyhow::anyhow!("No free session index available"))?
+                .ok_or_else(|| anyhow::anyhow!("No free session index available"))?;
+            drop(stack); // 显式释放锁
+            idx
         };
 
         Ok(SessionGuard {
@@ -130,9 +132,10 @@ impl SessionGuard {
 
 impl Drop for SessionGuard {
     fn drop(&mut self) {
-        // 将索引归还到空闲栈中
+        // 优化：快速归还索引并立即释放锁
         if let Ok(mut stack) = self.inner.free_indices.lock() {
             stack.push(self.index);
+            drop(stack); // 显式释放锁
         }
         // _permit 在此处自动 Drop，释放并发许可
     }

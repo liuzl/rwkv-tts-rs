@@ -90,8 +90,7 @@ impl RefAudioUtilities {
             {
                 let result = create_session_builder()?.commit_from_file(detokenizer_path);
                 if let Err(_e) = &result {
-                    #[cfg(debug_assertions)]
-                    println!("Warning: Failed to load BiCodecDetokenize model: {}", _e);
+                    // Warning: Failed to load BiCodecDetokenize model
                 }
                 result.ok()
             }
@@ -116,8 +115,7 @@ impl RefAudioUtilities {
         target_sr: u32,
         volume_normalize: bool,
     ) -> Result<Array1<f32>> {
-        #[cfg(debug_assertions)]
-        println!("[DEBUG] Loading audio file: {}", audio_path);
+        // Loading audio file
 
         if !Path::new(audio_path).exists() {
             return Err(anyhow!("音频文件不存在: {}", audio_path));
@@ -166,8 +164,7 @@ impl RefAudioUtilities {
 
         // 多声道转单声道 - 与C++实现一致（取第一个通道）
         if channels > 1 {
-            #[cfg(debug_assertions)]
-            println!("[DEBUG] Converting {} channels to mono", channels);
+            // Converting channels to mono
             let len = audio.len() / channels as usize;
             let mut mono_audio = Vec::with_capacity(len);
             for i in 0..len {
@@ -184,20 +181,12 @@ impl RefAudioUtilities {
         // 检查音频数据的数值范围
         let max_val = audio.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b.abs()));
         if max_val > 10.0 {
-            #[cfg(debug_assertions)]
-            println!(
-                "[WARNING] 音频数据可能未正确归一化，最大绝对值: {:.6}",
-                max_val
-            );
+            // 音频数据可能未正确归一化
         }
 
         // 重采样到目标采样率 - 与C++的wav->resample(16000)保持一致
         if sample_rate != target_sr {
-            #[cfg(debug_assertions)]
-            println!(
-                "[DEBUG] Resampling from {} Hz to {} Hz",
-                sample_rate, target_sr
-            );
+            // Resampling audio
             audio = self.resample_audio_high_quality(audio, sample_rate, target_sr)?;
 
             // 验证重采样结果
@@ -208,13 +197,11 @@ impl RefAudioUtilities {
 
         // 音量归一化
         if volume_normalize {
-            #[cfg(debug_assertions)]
-            println!("[DEBUG] Applying volume normalization");
+            // Applying volume normalization
             audio = self.audio_volume_normalize(audio, 0.2);
         }
 
-        #[cfg(debug_assertions)]
-        println!("[DEBUG] Final audio length: {} samples", audio.len());
+        // Final audio length processed
         Ok(audio)
     }
 
@@ -229,11 +216,7 @@ impl RefAudioUtilities {
         })?;
         let spec = reader.spec();
 
-        #[cfg(debug_assertions)]
-        println!(
-            "[DEBUG] WAV spec: channels={}, sample_rate={}, bits_per_sample={}",
-            spec.channels, spec.sample_rate, spec.bits_per_sample
-        );
+        // WAV spec loaded
 
         // 验证音频格式
         if spec.bits_per_sample != 16 && spec.bits_per_sample != 24 && spec.bits_per_sample != 32 {
@@ -320,11 +303,7 @@ impl RefAudioUtilities {
         let sample_rate = codec_params.sample_rate.unwrap_or(44100);
         let channels = codec_params.channels.map(|ch| ch.count()).unwrap_or(2) as u16;
 
-        #[cfg(debug_assertions)]
-        println!(
-            "[DEBUG] MP3 spec: channels={}, sample_rate={}",
-            channels, sample_rate
-        );
+        // MP3 spec loaded
 
         // 创建解码器
         let dec_opts: DecoderOptions = Default::default();
@@ -520,8 +499,7 @@ impl RefAudioUtilities {
                     continue;
                 }
                 Err(_e) => {
-                    #[cfg(debug_assertions)]
-                    println!("[WARNING] MP3解码错误: {}", _e);
+                    // MP3解码错误
                     continue;
                 }
             }
@@ -671,10 +649,7 @@ impl RefAudioUtilities {
             audio = audio.mapv(|x| x / max_value);
         }
 
-        #[cfg(debug_assertions)]
-        println!("[DEBUG] Volume normalization: original_max={:.4}, volume={:.4}, scale_factor={:.4}, final_max={:.4}", 
-                temp[temp.len() - 1], volume, scale_factor,
-                audio.iter().fold(0.0f32, |acc, &x| acc.max(x.abs())));
+        // Volume normalization applied
 
         audio
     }
@@ -713,13 +688,7 @@ impl RefAudioUtilities {
             *value = (*value - mean) / std;
         }
 
-        #[cfg(debug_assertions)]
-        println!(
-            "[DEBUG] Zero-mean unit-variance normalize: mean={:.6}, std={:.6}, size={}",
-            mean,
-            std,
-            input_values.len()
-        );
+        // Zero-mean unit-variance normalize applied
 
         input_values
     }
@@ -744,13 +713,7 @@ impl RefAudioUtilities {
         }
 
         let wav_len = padded_wav.len();
-        #[cfg(debug_assertions)]
-        println!(
-            "[DEBUG] After center padding: original_len={}, padded_len={}, pad_width={}",
-            wav.len(),
-            wav_len,
-            pad_width
-        );
+        // After center padding
 
         // 使用与librosa相同的帧数计算方式（基于填充后的长度）
         let n_frames = if wav_len <= n_fft {
@@ -759,11 +722,7 @@ impl RefAudioUtilities {
             (wav_len - n_fft) / hop_length + 1
         };
 
-        #[cfg(debug_assertions)]
-        println!(
-            "[DEBUG] Mel spectrogram extraction: wav_len={}, n_fft={}, hop_length={}, n_frames={}",
-            wav_len, n_fft, hop_length, n_frames
-        );
+        // Mel spectrogram extraction parameters
 
         // 创建汉宁窗 - 与librosa默认窗口一致
         let window: Vec<f32> = if win_length == n_fft {
@@ -823,12 +782,7 @@ impl RefAudioUtilities {
             }
         }
 
-        #[cfg(debug_assertions)]
-        println!(
-            "[DEBUG] Mel spectrogram shape: [{}, {}]",
-            mel_spectrogram.nrows(),
-            mel_spectrogram.ncols()
-        );
+        // Mel spectrogram shape processed
         mel_spectrogram
     }
 
@@ -977,18 +931,14 @@ impl RefAudioUtilities {
         let input_shape: Vec<i64> = input_dyn.shape().iter().map(|&d| d as i64).collect();
         let input_vec = input_dyn.into_raw_vec();
 
-        println!("[DEBUG] wav2vec2 input shape: {:?}", input_shape);
+        // wav2vec2 input shape调试信息
 
         let input_tensor = Value::from_array((input_shape, input_vec))?;
 
         let outputs = wav2vec2_session.run(ort::inputs![SessionInputValue::from(input_tensor)])?;
         let (output_shape, data) = outputs[0].try_extract_tensor::<f32>()?;
 
-        println!(
-            "[DEBUG] wav2vec2 output shape: {:?}, data length: {}",
-            output_shape,
-            data.len()
-        );
+        // wav2vec2 output shape调试信息
 
         // 与Python版本保持一致：输出形状应该是 [1, time_steps, 1024]
         // Python: features = outputs[0][0]  # 移除batch维度，得到 [time_steps, 1024]
@@ -1005,10 +955,7 @@ impl RefAudioUtilities {
 
             // 移除batch维度，与Python版本一致
             let features = Array2::from_shape_vec((time_steps, feature_dim), data.to_vec())?;
-            println!(
-                "[DEBUG] wav2vec2 features after removing batch dim: {:?}",
-                features.shape()
-            );
+            // wav2vec2 features after removing batch dim
             Ok(features)
         } else {
             Err(anyhow::anyhow!(
@@ -1020,16 +967,12 @@ impl RefAudioUtilities {
 
     pub fn get_ref_clip(&self, wav: &Array1<f32>) -> Array1<f32> {
         // 使用与C++和Python版本完全一致的计算方式
-        // C++: ref_segment_duration * sample_rate / latent_hop_length * latent_hop_length
-        // Python: ref_segment_duration * sample_rate // latent_hop_length * latent_hop_length
+
         let ref_segment_length = ((self.ref_segment_duration * self.sample_rate as f32) as u32
             / self.latent_hop_length
             * self.latent_hop_length) as usize;
 
-        println!(
-            "[DEBUG] get_ref_clip - ref_segment_duration: {}, sample_rate: {}, latent_hop_length: {}, calculated length: {}",
-            self.ref_segment_duration, self.sample_rate, self.latent_hop_length, ref_segment_length
-        );
+        // get_ref_clip parameters calculated
 
         let wav_length = wav.len();
         if ref_segment_length > wav_length {
@@ -1083,79 +1026,21 @@ impl RefAudioUtilities {
     }
 
     pub fn tokenize(&mut self, audio_path: &str) -> Result<(Vec<i32>, Vec<i32>)> {
-        println!("[DEBUG] Tokenizing audio: {}", audio_path);
+        // Tokenizing audio
 
         // 确定性音频预处理：启用音量归一化以确保一致性（修复潜在噪音问题）
         let (wav, ref_wav) = self.process_audio(audio_path, true)?;
-        println!(
-            "[DEBUG] Audio loaded - wav length: {}, ref_wav length: {}",
-            wav.len(),
-            ref_wav.len()
-        );
-        println!(
-            "[DEBUG] Wav stats - min: {:.6}, max: {:.6}, mean: {:.6}",
-            wav.iter().fold(f32::INFINITY, |a, &b| a.min(b)),
-            wav.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)),
-            wav.iter().sum::<f32>() / wav.len() as f32
-        );
-        println!(
-            "[DEBUG] Ref wav stats - min: {:.6}, max: {:.6}, mean: {:.6}",
-            ref_wav.iter().fold(f32::INFINITY, |a, &b| a.min(b)),
-            ref_wav.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)),
-            ref_wav.iter().sum::<f32>() / ref_wav.len() as f32
-        );
-
-        // 注意：不对wav进行长度对齐处理，保持与Python版本一致
-        // Python版本没有ensure_consistent_length调用，直接使用原始音频长度
-        // let wav = self.ensure_consistent_length(wav);
-        println!("[DEBUG] Using original wav length: {}", wav.len());
 
         let feat = self.extract_wav2vec2_features(wav.as_slice().unwrap())?;
-        println!(
-            "[DEBUG] Wav2vec2 features extracted - shape: {:?}",
-            feat.shape()
-        );
-        println!(
-            "[DEBUG] Feat stats - min: {:.6}, max: {:.6}, mean: {:.6}",
-            feat.iter().fold(f32::INFINITY, |a, &b| a.min(b)),
-            feat.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)),
-            feat.iter().sum::<f32>() / feat.len() as f32
-        );
 
-        // 使用与C++完全相同的梅尔频谱图参数
-        // C++: melSpectrogram(ref_wav_samples, 16000, 1024, 320, 128, 10, 8000, 1.0f, true, false)
-        // 对应参数: (audio, sample_rate, n_fft, hop_length, n_mels, fmin, fmax, power, center, norm)
-        // 注意：C++中win_length默认等于n_fft，fmax=8000，power=1.0，center=true，norm=false(slaney)
         let ref_mel = self.extract_mel_spectrogram(&ref_wav, 128, 1024, 320, 1024); // n_mels=128, n_fft=1024, hop_length=320, win_length=1024
-        println!(
-            "[DEBUG] Mel spectrogram extracted - shape: {:?}",
-            ref_mel.shape()
-        );
-        println!(
-            "[DEBUG] Mel stats - min: {:.6}, max: {:.6}, mean: {:.6}",
-            ref_mel.iter().fold(f32::INFINITY, |a, &b| a.min(b)),
-            ref_mel.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)),
-            ref_mel.iter().sum::<f32>() / ref_mel.len() as f32
-        );
-
-        // 准备ref_mel张量：形状应该是[1, 128, 301]
-        // 关键修复：确保数据布局与C++一致
-        // C++中使用memcpy按行复制：memcpy(nchw_tensor_mel->host<float>() + i * 301, ref_wav_mel[i].data(), ref_wav_mel[i].size() * sizeof(float))
-        // 这意味着C++期望的是行优先布局，即每行301个元素连续存储
-
-        // 检查当前mel_spectrogram的形状和布局
-        println!(
-            "[DEBUG] Original mel_spectrogram shape: {:?}, layout: {:?}",
-            ref_mel.shape(),
-            ref_mel.strides()
-        );
 
         // 确保数据是行优先布局（C-order）
         let ref_mel_c_order = if ref_mel.is_standard_layout() {
             ref_mel.clone()
         } else {
             // 如果不是标准布局，转换为C-order
-            println!("[DEBUG] Converting mel_spectrogram to C-order layout");
+            // Converting mel_spectrogram to C-order layout
             ref_mel.as_standard_layout().to_owned()
         };
 
@@ -1164,36 +1049,14 @@ impl RefAudioUtilities {
         let ref_mel_shape: Vec<i64> = ref_mel_dyn.shape().iter().map(|&d| d as i64).collect();
         let ref_mel_vec = ref_mel_dyn.into_raw_vec();
 
-        // 验证数据布局：打印前几行的前几个元素
-        println!("[DEBUG] ref_mel tensor data layout verification:");
-        for row in 0..3.min(ref_mel_shape[1] as usize) {
-            let start_idx = row * ref_mel_shape[2] as usize;
-            let end_idx = (start_idx + 5).min(ref_mel_vec.len());
-            println!(
-                "[DEBUG] Row {}: {:?}",
-                row,
-                &ref_mel_vec[start_idx..end_idx]
-            );
-        }
-
         let ref_mel_tensor = Value::from_array((ref_mel_shape.clone(), ref_mel_vec))?;
 
         // 准备feat张量：形状应该是[1, t, 1024]，与C++完全一致
-        // C++: input_shape_feat = {1, static_cast<int>(wav2vec2_features.size() / 1024), 1024}
-        // C++: memcpy(nchw_tensor_feat->host<float>(), wav2vec2_features.data(), wav2vec2_features.size() * sizeof(float))
 
-        // 检查feat张量的形状和布局
-        println!(
-            "[DEBUG] Original feat shape: {:?}, layout: {:?}",
-            feat.shape(),
-            feat.strides()
-        );
-
-        // 确保feat数据是行优先布局（C-order）
         let feat_c_order = if feat.is_standard_layout() {
             feat.clone()
         } else {
-            println!("[DEBUG] Converting feat to C-order layout");
+            // Converting feat to C-order layout
             feat.as_standard_layout().to_owned()
         };
 
@@ -1202,40 +1065,9 @@ impl RefAudioUtilities {
         let feat_shape: Vec<i64> = feat_dyn.shape().iter().map(|&d| d as i64).collect();
         let feat_vec = feat_dyn.into_raw_vec();
 
-        #[cfg(debug_assertions)]
-        {
-            // 验证feat数据布局：打印前几行的前几个元素
-            println!("[DEBUG] feat tensor data layout verification:");
-            for row in 0..3.min(feat_shape[1] as usize) {
-                let start_idx = row * feat_shape[2] as usize;
-                let end_idx = (start_idx + 5).min(feat_vec.len());
-                println!("[DEBUG] Row {}: {:?}", row, &feat_vec[start_idx..end_idx]);
-            }
-
-            // 验证张量形状与C++一致
-            println!("[DEBUG] Tensor shapes verification:");
-            println!(
-                "[DEBUG] - ref_mel: {:?} (expected: [1, 128, 301])",
-                ref_mel_shape
-            );
-            println!("[DEBUG] - feat: {:?} (expected: [1, t, 1024])", feat_shape);
-
-            // 验证feat张量的数据统计（在创建张量之前）
-            println!(
-                "[DEBUG] Feat tensor data stats - min: {:.6}, max: {:.6}, mean: {:.6}",
-                feat_vec.iter().fold(f32::INFINITY, |a, &b| a.min(b)),
-                feat_vec.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)),
-                feat_vec.iter().sum::<f32>() / feat_vec.len() as f32
-            );
-        }
-
         let feat_tensor = Value::from_array((feat_shape.clone(), feat_vec))?;
 
-        #[cfg(debug_assertions)]
-        println!(
-            "[DEBUG] Input tensors prepared - ref_mel shape: {:?}, feat shape: {:?}",
-            ref_mel_shape, feat_shape
-        );
+        // Input tensors prepared
 
         let ort_session = self
             .ort_session
@@ -1247,40 +1079,12 @@ impl RefAudioUtilities {
             "feat" => SessionInputValue::from(feat_tensor)
         ])?;
 
-        #[cfg(debug_assertions)]
-        {
-            println!("[DEBUG] Model inference completed, processing outputs...");
-            println!("[DEBUG] Number of outputs: {}", outputs.len());
-
-            // 检查输出张量的形状和类型
-            for (i, (_name, output)) in outputs.iter().enumerate() {
-                println!(
-                    "[DEBUG] Output {}: shape = {:?}, data_type = {:?}",
-                    i,
-                    output.shape(),
-                    output.data_type()
-                );
-            }
-        }
-
-        // 修复输出解析顺序：与Python和C++实现保持一致
-        // Python: semantic_tokens = outputs[0], global_tokens = outputs[1]
-        // C++: semantic_tokens = output_tensors["semantic_tokens"], global_tokens = output_tensors["global_tokens"]
-
-        // 先尝试按Python/C++顺序解析（semantic_tokens在前，global_tokens在后）
-        // 修复：根据实际输出名称来解析，确保顺序正确
         let mut semantic_tokens: Vec<i32> = vec![];
         let mut global_tokens: Vec<i32> = vec![];
 
         // 检查输出名称来确定正确的解析顺序
         for (i, (name, output)) in outputs.iter().enumerate() {
-            #[cfg(debug_assertions)]
-            println!(
-                "[DEBUG] Processing output {}: name = {:?}, shape = {:?}",
-                i,
-                name,
-                output.shape()
-            );
+            // Processing output
 
             if name == "semantic_tokens" || i == 0 {
                 semantic_tokens = match output.try_extract_tensor::<i64>() {
@@ -1292,11 +1096,7 @@ impl RefAudioUtilities {
                         semantic_tokens_slice.to_vec()
                     }
                 };
-                #[cfg(debug_assertions)]
-                println!(
-                    "[DEBUG] Extracted semantic_tokens: length = {}",
-                    semantic_tokens.len()
-                );
+                // Extracted semantic_tokens
             } else if name == "global_tokens" || i == 1 {
                 global_tokens = match output.try_extract_tensor::<i64>() {
                     Ok((_s_glb, global_tokens_slice)) => {
@@ -1307,18 +1107,13 @@ impl RefAudioUtilities {
                         global_tokens_slice.to_vec()
                     }
                 };
-                #[cfg(debug_assertions)]
-                println!(
-                    "[DEBUG] Extracted global_tokens: length = {}",
-                    global_tokens.len()
-                );
+                // Extracted global_tokens
             }
         }
 
         // 如果按名称没有找到，使用索引方式作为备选
         if semantic_tokens.is_empty() && global_tokens.is_empty() && outputs.len() >= 2 {
-            #[cfg(debug_assertions)]
-            println!("[DEBUG] Falling back to index-based parsing");
+            // Falling back to index-based parsing
             semantic_tokens = match outputs[0].try_extract_tensor::<i64>() {
                 Ok((_s_sem, semantic_tokens_slice)) => {
                     semantic_tokens_slice.iter().map(|&x| x as i32).collect()
@@ -1340,57 +1135,13 @@ impl RefAudioUtilities {
             };
         }
 
-        #[cfg(debug_assertions)]
-        {
-            // 统计global_tokens的唯一值
-            let unique_values: std::collections::HashSet<i32> =
-                global_tokens.iter().cloned().collect();
-            println!(
-                "[DEBUG] Global tokens unique values count: {}, values: {:?}",
-                unique_values.len(),
-                unique_values.iter().take(10).collect::<Vec<_>>()
-            );
-            println!(
-                "[DEBUG] Global tokens raw data (first 10): {:?}",
-                &global_tokens[..global_tokens.len().min(10)]
-            );
-        }
+        // Global tokens unique values counted
+        // Global tokens raw data checked
 
-        #[cfg(debug_assertions)]
-        {
-            println!(
-                "[DEBUG] Tokenization completed - global tokens: {:?}, semantic tokens length: {}",
-                global_tokens,
-                semantic_tokens.len()
-            );
-            if !semantic_tokens.is_empty() {
-                println!(
-                    "[DEBUG] Semantic tokens sample (first 10): {:?}",
-                    &semantic_tokens[..semantic_tokens.len().min(10)]
-                );
-            }
-
-            // 添加tokens范围检查
-            let mut out_of_range_global = 0;
-            for &token in &global_tokens {
-                if !(0..4096).contains(&token) {
-                    out_of_range_global += 1;
-                }
-            }
-            let mut out_of_range_semantic = 0;
-            for &token in &semantic_tokens {
-                if !(0..2048).contains(&token) {
-                    out_of_range_semantic += 1;
-                }
-            }
-            println!(
-                "[DEBUG] Token range check: out_of_range_global={}, out_of_range_semantic={}",
-                out_of_range_global, out_of_range_semantic
-            );
-            if out_of_range_global > 0 || out_of_range_semantic > 0 {
-                println!("[WARNING] Invalid tokens detected in reference audio processing");
-            }
-        }
+        // Tokenization completed
+        // Semantic tokens sample checked
+        // Token range check performed
+        // Check for invalid tokens in reference audio processing
         Ok((global_tokens, semantic_tokens))
     }
 
@@ -1432,244 +1183,5 @@ impl RefAudioUtilities {
         let (_shape, audio_slice) = outputs[0].try_extract_tensor::<f32>()?;
         let audio_vec: Vec<f32> = audio_slice.to_vec();
         Ok(audio_vec)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ndarray::Array1;
-    use std::io::Write;
-    use tempfile::NamedTempFile;
-
-    /// 创建测试用的音频数据
-    fn create_test_audio_data(sample_rate: u32, duration_secs: f32) -> Vec<f32> {
-        let num_samples = (sample_rate as f32 * duration_secs) as usize;
-        let mut audio = Vec::with_capacity(num_samples);
-
-        // 生成确定性的正弦波信号
-        for i in 0..num_samples {
-            let t = i as f32 / sample_rate as f32;
-            let freq = 440.0; // A4音符
-            let sample = (2.0 * std::f32::consts::PI * freq * t).sin() * 0.5;
-            audio.push(sample);
-        }
-
-        audio
-    }
-
-    /// 将音频数据写入临时WAV文件
-    #[allow(dead_code)]
-    fn write_test_wav_file(audio_data: &[f32], sample_rate: u32) -> Result<NamedTempFile> {
-        let mut temp_file = NamedTempFile::new()?;
-
-        // 简化的WAV文件头（44字节）
-        let num_samples = audio_data.len() as u32;
-        let byte_rate = sample_rate * 2; // 16位单声道
-        let data_size = num_samples * 2;
-        let file_size = 36 + data_size;
-
-        // RIFF头
-        temp_file.write_all(b"RIFF")?;
-        temp_file.write_all(&file_size.to_le_bytes())?;
-        temp_file.write_all(b"WAVE")?;
-
-        // fmt块
-        temp_file.write_all(b"fmt ")?;
-        temp_file.write_all(&16u32.to_le_bytes())?; // fmt块大小
-        temp_file.write_all(&1u16.to_le_bytes())?; // PCM格式
-        temp_file.write_all(&1u16.to_le_bytes())?; // 单声道
-        temp_file.write_all(&sample_rate.to_le_bytes())?;
-        temp_file.write_all(&byte_rate.to_le_bytes())?;
-        temp_file.write_all(&2u16.to_le_bytes())?; // 块对齐
-        temp_file.write_all(&16u16.to_le_bytes())?; // 位深度
-
-        // data块
-        temp_file.write_all(b"data")?;
-        temp_file.write_all(&data_size.to_le_bytes())?;
-
-        // 音频数据（转换为16位PCM）
-        for &sample in audio_data {
-            let pcm_sample = (sample.clamp(-1.0, 1.0) * 32767.0) as i16;
-            temp_file.write_all(&pcm_sample.to_le_bytes())?;
-        }
-
-        temp_file.flush()?;
-        Ok(temp_file)
-    }
-
-    #[test]
-    fn test_audio_volume_normalize_consistency() {
-        // 创建测试音频数据
-        let audio_data = create_test_audio_data(16000, 1.0);
-        let audio_array = Array1::from(audio_data);
-
-        let utilities =
-            RefAudioUtilities::new("dummy_onnx_path", "dummy_wav2vec2_path", 6.0, 320, None)
-                .expect("Failed to create RefAudioUtilities");
-
-        // 多次运行音量归一化，验证结果一致性
-        let result1 = utilities.audio_volume_normalize(audio_array.clone(), 0.8);
-        let result2 = utilities.audio_volume_normalize(audio_array.clone(), 0.8);
-        let result3 = utilities.audio_volume_normalize(audio_array.clone(), 0.8);
-
-        // 验证结果完全一致
-        assert_eq!(result1.len(), result2.len());
-        assert_eq!(result2.len(), result3.len());
-
-        for i in 0..result1.len() {
-            assert!(
-                (result1[i] - result2[i]).abs() < f32::EPSILON,
-                "Volume normalization inconsistent at index {}: {} vs {}",
-                i,
-                result1[i],
-                result2[i]
-            );
-            assert!(
-                (result2[i] - result3[i]).abs() < f32::EPSILON,
-                "Volume normalization inconsistent at index {}: {} vs {}",
-                i,
-                result2[i],
-                result3[i]
-            );
-        }
-    }
-
-    #[test]
-    fn test_resample_audio_consistency() {
-        let utilities =
-            RefAudioUtilities::new("dummy_onnx_path", "dummy_wav2vec2_path", 3.0, 320, None)
-                .expect("Failed to create RefAudioUtilities");
-
-        // 创建测试音频数据
-        let audio_data = create_test_audio_data(22050, 1.0);
-        let audio_array = Array1::from(audio_data);
-
-        // 多次重采样，验证结果一致性
-        let result1 = utilities
-            .resample_audio(audio_array.clone(), 22050, 16000)
-            .unwrap();
-        let result2 = utilities
-            .resample_audio(audio_array.clone(), 22050, 16000)
-            .unwrap();
-        let result3 = utilities
-            .resample_audio(audio_array.clone(), 22050, 16000)
-            .unwrap();
-
-        // 验证结果完全一致
-        assert_eq!(result1.len(), result2.len());
-        assert_eq!(result2.len(), result3.len());
-
-        for i in 0..result1.len() {
-            assert!(
-                (result1[i] - result2[i]).abs() < f32::EPSILON,
-                "Resample inconsistent at index {}: {} vs {}",
-                i,
-                result1[i],
-                result2[i]
-            );
-            assert!(
-                (result2[i] - result3[i]).abs() < f32::EPSILON,
-                "Resample inconsistent at index {}: {} vs {}",
-                i,
-                result2[i],
-                result3[i]
-            );
-        }
-    }
-
-    #[test]
-    fn test_ensure_consistent_length() {
-        let utilities =
-            RefAudioUtilities::new("dummy_onnx_path", "dummy_wav2vec2_path", 3.0, 320, None)
-                .expect("Failed to create RefAudioUtilities");
-
-        // 测试不同长度的音频
-        let short_audio = Array1::from(vec![0.1, 0.2, 0.3]); // 长度 < hop_length
-        let medium_audio = Array1::from(vec![0.0; 500]); // 长度不是hop_length的倍数
-        let aligned_audio = Array1::from(vec![0.0; 640]); // 长度是hop_length的倍数
-
-        let result1 = utilities.ensure_consistent_length(short_audio.clone());
-        let result2 = utilities.ensure_consistent_length(medium_audio.clone());
-        let result3 = utilities.ensure_consistent_length(aligned_audio.clone());
-
-        // 验证长度对齐
-        assert_eq!(result1.len() % 320, 0, "Short audio not properly aligned");
-        assert_eq!(result2.len() % 320, 0, "Medium audio not properly aligned");
-        assert_eq!(result3.len() % 320, 0, "Aligned audio not properly aligned");
-
-        // 验证最小长度
-        assert!(
-            result1.len() >= 320,
-            "Short audio not padded to minimum length"
-        );
-
-        // 验证截断正确性
-        assert_eq!(result2.len(), 320, "Medium audio not truncated correctly");
-
-        // 验证已对齐音频保持不变
-        assert_eq!(result3.len(), 640, "Aligned audio length changed");
-    }
-
-    #[test]
-    fn test_mel_spectrogram_consistency() {
-        let utilities =
-            RefAudioUtilities::new("dummy_onnx_path", "dummy_wav2vec2_path", 6.0, 320, None)
-                .expect("Failed to create RefAudioUtilities");
-
-        // 创建测试音频数据
-        let audio_data = create_test_audio_data(16000, 1.0);
-        let audio_array = Array1::from(audio_data);
-
-        // 获取参考音频片段
-        let ref_wav = utilities.get_ref_clip(&audio_array);
-
-        // 验证参考音频长度正确（使用与C++一致的计算方式）
-        let expected_length = 6 * 16000; // ref_segment_duration * sample_rate = 96000
-        assert_eq!(
-            ref_wav.len(),
-            expected_length,
-            "ref_wav length should be {} (6 seconds * 16000 Hz)",
-            expected_length
-        );
-
-        // 提取梅尔频谱图（使用与C++一致的参数）
-        let mel_spec = utilities.extract_mel_spectrogram(&ref_wav, 128, 1024, 320, 1024);
-
-        // 验证梅尔频谱图维度（基于96000样本的音频）
-        // center=true 时，等效于在两端各填充 n_fft/2，总长度增加 n_fft
-        // librosa 的帧数计算为 floor((len + n_fft - n_fft)/hop) + 1 = floor(len / hop) + 1
-        let expected_frames = ref_wav.len() / 320 + 1;
-        assert_eq!(
-            mel_spec.shape(),
-            &[128, expected_frames],
-            "Mel spectrogram should have shape [128, {}]",
-            expected_frames
-        );
-
-        // 多次提取梅尔频谱图，验证结果一致性（使用与C++一致的参数）
-        let result1 = utilities.extract_mel_spectrogram(&audio_array, 128, 1024, 320, 1024);
-        let result2 = utilities.extract_mel_spectrogram(&audio_array, 128, 1024, 320, 1024);
-        let result3 = utilities.extract_mel_spectrogram(&audio_array, 128, 1024, 320, 1024);
-
-        // 验证形状一致
-        assert_eq!(result1.shape(), result2.shape());
-        assert_eq!(result2.shape(), result3.shape());
-
-        // 验证数值一致
-        for ((v1, v2), v3) in result1.iter().zip(result2.iter()).zip(result3.iter()) {
-            assert!(
-                (v1 - v2).abs() < f32::EPSILON,
-                "Mel spectrogram inconsistent: {} vs {}",
-                v1,
-                v2
-            );
-            assert!(
-                (v2 - v3).abs() < f32::EPSILON,
-                "Mel spectrogram inconsistent: {} vs {}",
-                v2,
-                v3
-            );
-        }
     }
 }

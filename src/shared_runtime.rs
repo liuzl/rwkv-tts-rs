@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock, Semaphore};
-use tracing::info;
+// 删除未使用的导入
 use web_rwkv::runtime::loader::Loader;
 use web_rwkv::runtime::model::{Bundle, State};
 use web_rwkv::{runtime::v7, tokenizer::Tokenizer};
@@ -35,7 +35,7 @@ pub struct TtsInferContext {
     pub runtime: Arc<web_rwkv::runtime::TokioRuntime<web_rwkv::runtime::infer::Rnn>>,
     /// 模型状态（独立副本）- 重新添加以确保状态隔离
     pub state: Arc<Mutex<Box<dyn State + Send + Sync>>>,
-    /// Serialize runtime.infer calls temporarily for correctness under concurrency
+    /// Serialize runtime.infer calls for correctness under concurrency
     pub runtime_semaphore: Arc<Semaphore>,
 }
 
@@ -73,7 +73,8 @@ impl SharedRwkvRuntime {
         quant_config: Option<HashMap<usize, web_rwkv::runtime::model::Quant>>,
         config: DynamicBatchConfig, // 添加配置参数
     ) -> Result<Self> {
-        info!("🔧 初始化共享RWKV Runtime: {}", model_path);
+        // 初始化共享RWKV Runtime
+        // 配置信息
 
         // 创建WebRWKV上下文和模型
         use web_rwkv::context::{ContextBuilder, InstanceExt};
@@ -118,18 +119,12 @@ impl SharedRwkvRuntime {
                 ));
             }
 
-            info!(
-                "📊 SafeTensors模型信息: vocab={}, layers={}, embed={}, heads={}",
-                actual_info.num_vocab,
-                actual_info.num_layer,
-                actual_info.num_emb,
-                actual_info.num_head
-            );
+            // SafeTensors模型信息记录
 
             ("safetensors", actual_info)
         } else {
             // 假设为prefab格式，为V7模型创建默认info（实际加载时会验证）
-            info!("🔧 检测到prefab格式，使用V7模型默认配置");
+            // 检测到prefab格式，使用V7模型默认配置
             let default_info = web_rwkv::runtime::model::ModelInfo {
                 version: web_rwkv::runtime::model::ModelVersion::V7,
                 num_vocab: 65536,
@@ -142,7 +137,7 @@ impl SharedRwkvRuntime {
             ("prefab", default_info)
         };
 
-        info!("🔧 模型格式: {}", load_type);
+        // 模型格式确定
 
         // 创建GPU实例和适配器
         let instance = Instance::default();
@@ -183,7 +178,7 @@ impl SharedRwkvRuntime {
 
         // 使用配置中的信号量许可数量
         let semaphore_permits = config.semaphore_permits;
-        info!("🔧 设置信号量许可数量: {} (配置值)", semaphore_permits);
+        // 设置信号量许可数量
 
         // 创建TokioRuntime实例
         let runtime = Arc::new(web_rwkv::runtime::TokioRuntime::new((*model_bundle).clone()).await);
@@ -196,7 +191,7 @@ impl SharedRwkvRuntime {
                 .map_err(|e| anyhow::anyhow!("Failed to parse vocabulary: {}", e))?,
         );
 
-        info!("✅ 共享RWKV Runtime初始化完成");
+        // 共享RWKV Runtime初始化完成
 
         Ok(Self {
             runtime,
@@ -233,13 +228,14 @@ impl SharedRwkvRuntime {
             Box::new(self.model_bundle.state()) as Box<dyn State + Send + Sync>
         ));
 
-        // 记录活跃状态
+        // 记录活跃状态（优化：减少锁持有时间）
         {
             let mut active = self.active_states.write().await;
             active.insert(state_id, request_id.clone());
+            drop(active); // 显式释放锁
         }
 
-        info!("🔧 创建推理上下文: {} (状态ID: {:?})", request_id, state_id);
+        // 创建推理上下文
 
         Ok(TtsInferContext {
             request_id,
@@ -253,11 +249,14 @@ impl SharedRwkvRuntime {
         })
     }
 
-    /// 清理状态
+    /// 清理状态（优化：减少锁持有时间）
     pub async fn cleanup_state(&self, state_id: TtsStateId) {
-        let mut active = self.active_states.write().await;
-        active.remove(&state_id);
-        info!("🧹 清理状态: {:?}", state_id);
+        {
+            let mut active = self.active_states.write().await;
+            active.remove(&state_id);
+            drop(active); // 显式释放锁
+        }
+        // 清理状态
     }
 
     /// 获取分词器

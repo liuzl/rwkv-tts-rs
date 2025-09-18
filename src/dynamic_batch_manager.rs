@@ -6,12 +6,11 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
-use tracing::{debug, error, info, warn};
+use tracing::{error, warn};
 
 // 导入拆分的模块
 use crate::batch_types::*;
-// use crate::feature_extractor::*; // 暂时注释掉未使用的导入
-// use crate::sampler_manager::*; // 暂时注释掉未使用的导入
+
 use crate::shared_runtime::*;
 
 // 引入新的推理模块
@@ -37,8 +36,8 @@ impl DynamicBatchManager {
         config: DynamicBatchConfig,
         quant_config: Option<std::collections::HashMap<usize, web_rwkv::runtime::model::Quant>>,
     ) -> Result<Self> {
-        info!("🚀 初始化动态批处理管理器");
-        info!("📊 配置: {:?}", config);
+        // 初始化动态批处理管理器
+        // 配置信息
 
         // 创建共享运行时
         let shared_runtime = Arc::new(
@@ -78,7 +77,7 @@ impl DynamicBatchManager {
             });
         }
 
-        info!("✅ 动态批处理管理器初始化完成");
+        // 动态批处理管理器初始化完成
 
         Ok(Self {
             config,
@@ -126,7 +125,7 @@ impl DynamicBatchManager {
         infer_tx: Sender<InferBatch>,
         config: DynamicBatchConfig,
     ) {
-        info!("🔧 核心运行时启动");
+        // 核心运行时启动
 
         // 启动请求收集工作线程
         tokio::spawn(Self::enqueue_worker(request_rx, infer_tx, config));
@@ -143,7 +142,7 @@ impl DynamicBatchManager {
         infer_tx: Sender<InferBatch>,
         config: DynamicBatchConfig,
     ) {
-        info!("📥 请求收集工作线程启动");
+        // 请求收集工作线程启动
         let mut pending_requests = VecDeque::new();
         let mut batch_counter = 1usize;
 
@@ -160,7 +159,7 @@ impl DynamicBatchManager {
 
                         // 激进地收集所有立即可用的请求（非阻塞）
                         let mut quick_collect_count = 0;
-                        let quick_collect_start = Instant::now();
+                        let _quick_collect_start = Instant::now();
                         while pending_requests.len() < config.max_batch_size
                             && quick_collect_count < 50
                         {
@@ -175,11 +174,7 @@ impl DynamicBatchManager {
                         }
 
                         if quick_collect_count > 0 {
-                            debug!(
-                                "快速收集到 {} 个额外请求，耗时 {:?}",
-                                quick_collect_count,
-                                quick_collect_start.elapsed()
-                            );
+                            // 快速收集到额外请求
                         }
 
                         // 如果收集到多个请求，立即处理
@@ -194,7 +189,7 @@ impl DynamicBatchManager {
                         }
                     }
                     Ok(Err(_)) => {
-                        info!("请求通道关闭，工作线程退出");
+                        // 请求通道关闭，工作线程退出
                         return;
                     }
                     Err(_) => {
@@ -208,26 +203,10 @@ impl DynamicBatchManager {
 
             // 处理收集到的请求
             if !pending_requests.is_empty() {
-                let batch_size = pending_requests.len();
                 let batch_id = batch_counter;
-                let collect_duration = collect_start.elapsed();
                 batch_counter += 1;
 
-                // 计算队列中请求的平均等待时间
-                let avg_queue_wait = if !pending_requests.is_empty() {
-                    let total_wait: Duration = pending_requests
-                        .iter()
-                        .map(|req| req.submitted_at.elapsed())
-                        .sum();
-                    total_wait / pending_requests.len() as u32
-                } else {
-                    Duration::ZERO
-                };
-
-                info!(
-                    "📦 收集到批次 {}: {} 个请求，收集耗时 {:?}，平均队列等待时间: {:?}",
-                    batch_id, batch_size, collect_duration, avg_queue_wait
-                );
+                // 收集到批次请求
 
                 Self::process_collected_batch(
                     pending_requests.drain(..).collect(),
@@ -246,10 +225,9 @@ impl DynamicBatchManager {
         batch_id: usize,
     ) {
         let batch_size = requests.len();
-        let process_start = Instant::now();
         let (result_tx, result_rx) = flume::unbounded();
 
-        info!("🔄 开始处理批次 {}: {} 个请求", batch_id, batch_size);
+        // 开始处理批次
 
         // 转换为批处理请求
         let batch_requests: Vec<crate::rwkv_sampler::TtsBatchRequest> = requests
@@ -270,7 +248,7 @@ impl DynamicBatchManager {
             sender: result_tx,
         };
 
-        debug!("📤 发送批次 {} 到推理队列", batch_id);
+        // 发送批次到推理队列
         if let Err(e) = infer_tx.send_async(infer_batch).await {
             error!("❌ 发送推理批次 {} 失败: {}", batch_id, e);
             // 发送错误给所有请求
@@ -283,20 +261,16 @@ impl DynamicBatchManager {
         }
 
         // 等待推理结果
-        debug!("⏳ 等待批次 {} 推理结果", batch_id);
+        // 等待批次推理结果
         match result_rx.recv_async().await {
             Ok(results) => {
-                let process_duration = process_start.elapsed();
                 // 检查结果数量是否匹配
                 if results.len() == batch_size {
                     // 分发结果
                     for (request, result) in requests.into_iter().zip(results.into_iter()) {
                         let _ = request.response_tx.send(Ok(result));
                     }
-                    info!(
-                        "✅ 批次 {} 处理完成: {} 个请求，总耗时: {:?}",
-                        batch_id, batch_size, process_duration
-                    );
+                    // 批次处理完成
                 } else {
                     // 结果数量不匹配，可能是推理失败
                     error!(
@@ -314,11 +288,7 @@ impl DynamicBatchManager {
                 }
             }
             Err(e) => {
-                let process_duration = process_start.elapsed();
-                error!(
-                    "❌ 接收批次 {} 推理结果失败: {}，耗时: {:?}",
-                    batch_id, e, process_duration
-                );
+                error!("❌ 接收批次 {} 推理结果失败: {}", batch_id, e);
                 // 发送错误给所有请求
                 for request in requests {
                     let _ = request
@@ -332,16 +302,13 @@ impl DynamicBatchManager {
     /// 推理工作线程 - 重构版：使用独立状态管理确保状态隔离
     /// 关键改进：每个请求创建独立的推理上下文，避免状态污染
     async fn infer_worker(
-        worker_id: usize,
+        _worker_id: usize,
         infer_rx: Receiver<InferBatch>,
         shared_runtime: Arc<SharedRwkvRuntime>,
         _config: DynamicBatchConfig,
     ) {
-        info!("🔧 推理工作线程 {} 启动，使用独立状态管理架构", worker_id);
-        info!(
-            "🔒 状态隔离：工作线程 {} 将为每个请求创建独立推理上下文",
-            worker_id
-        );
+        // 推理工作线程启动，使用独立状态管理架构
+        // 状态隔离：工作线程将为每个请求创建独立推理上下文
 
         while let Ok(batch) = infer_rx.recv_async().await {
             match batch {
@@ -351,12 +318,8 @@ impl DynamicBatchManager {
                     sender,
                 } => {
                     let batch_size = requests.len();
-                    let infer_start = Instant::now();
 
-                    info!(
-                        "工作线程 {} 开始推理批次 {}: {} 个请求 (独立状态模式)",
-                        worker_id, batch_id, batch_size
-                    );
+                    // 工作线程开始推理批次
 
                     // 🔧 关键改进：为每个请求创建独立的推理上下文
                     // 确保完全的状态隔离，避免并发请求间的状态污染
@@ -367,17 +330,9 @@ impl DynamicBatchManager {
                     )
                     .await;
 
-                    let infer_time = infer_start.elapsed();
-
                     match result {
                         Ok(results) => {
-                            info!(
-                                "工作线程 {} 批次 {} 推理完成: {:.2}ms, 平均每请求: {:.2}ms",
-                                worker_id,
-                                batch_id,
-                                infer_time.as_secs_f64() * 1000.0,
-                                infer_time.as_secs_f64() * 1000.0 / batch_size as f64
-                            );
+                            // 工作线程批次推理完成
 
                             if let Err(e) = sender.send_async(results).await {
                                 error!("发送推理结果失败: {}", e);
@@ -400,7 +355,7 @@ impl DynamicBatchManager {
             }
         }
 
-        info!("推理工作线程 {} 退出", worker_id);
+        // 推理工作线程退出
     }
 
     /// 使用独立上下文处理批次
@@ -408,15 +363,12 @@ impl DynamicBatchManager {
     async fn process_batch_with_independent_contexts(
         shared_runtime: Arc<SharedRwkvRuntime>,
         requests: Vec<crate::rwkv_sampler::TtsBatchRequest>,
-        batch_id: u64,
+        _batch_id: u64,
     ) -> Result<Vec<(Vec<i32>, Vec<i32>)>> {
         let batch_size = requests.len();
         let mut results = Vec::with_capacity(batch_size);
 
-        info!(
-            "🔧 为批次 {} 创建 {} 个独立推理上下文",
-            batch_id, batch_size
-        );
+        // 为批次创建独立推理上下文
 
         // 为每个请求创建独立的推理上下文并顺序处理（避免GPU资源争用）
         // 注意：这里改为顺序处理而不是并行处理，因为GPU资源是有限的
@@ -436,10 +388,7 @@ impl DynamicBatchManager {
                 top_p: request.args.top_p,
                 seed: if is_voice_cloning {
                     // 声音克隆时忽略用户提供的seed参数，确保确定性
-                    info!(
-                        "🎯 [{}] 声音克隆场景：忽略用户seed参数，使用确定性采样",
-                        request_id
-                    );
+                    // 声音克隆场景：忽略用户seed参数，使用确定性采样
                     None
                 } else {
                     request.args.seed
@@ -466,7 +415,7 @@ impl DynamicBatchManager {
             match result {
                 Ok(res) => {
                     results.push(res);
-                    info!("✅ 请求 {} 处理完成", request_id);
+                    // 请求处理完成
                 }
                 Err(e) => {
                     error!("❌ 请求 {} 处理失败: {}", request_id, e);
@@ -475,11 +424,7 @@ impl DynamicBatchManager {
             }
         }
 
-        info!(
-            "✅ 批次 {} 独立推理完成，处理了 {} 个请求",
-            batch_id,
-            results.len()
-        );
+        // 批次独立推理完成
 
         Ok(results)
     }
@@ -489,11 +434,8 @@ impl DynamicBatchManager {
         infer_context: TtsInferContext,
         request: crate::rwkv_sampler::TtsBatchRequest,
     ) -> Result<(Vec<i32>, Vec<i32>)> {
-        let request_id = &infer_context.request_id;
-        info!(
-            "🚀 [{}] 开始独立推理 - 文本: '{}'",
-            request_id, request.text
-        );
+        let _request_id = &infer_context.request_id;
+        // 开始独立推理
 
         // 检测是否为声音克隆场景
         let is_voice_cloning =
@@ -502,10 +444,7 @@ impl DynamicBatchManager {
         // 为本次请求创建独立RNG（可复现且互不干扰）
         let rng: rand::rngs::StdRng = if is_voice_cloning {
             // 声音克隆时不使用随机数，使用固定种子确保确定性
-            info!(
-                "🎯 [{}] 声音克隆模式：使用固定种子确保结果一致性",
-                request_id
-            );
+            // 声音克隆模式：使用固定种子确保结果一致性
             rand::rngs::StdRng::seed_from_u64(0) // 使用固定种子
         } else if let Some(seed) = request.args.seed {
             rand::rngs::StdRng::seed_from_u64(seed)
@@ -520,7 +459,7 @@ impl DynamicBatchManager {
             .await
             .map_err(|e| anyhow::anyhow!("无法获取运行时信号量: {}", e))?;
 
-        info!("🔒 [{}] 已获取信号量许可，开始推理", request_id);
+        // 已获取信号量许可，开始推理
 
         // 获取tokenizer
         let tokenizer = &infer_context.tokenizer;
@@ -534,13 +473,7 @@ impl DynamicBatchManager {
         // 根据C++代码逻辑，文本tokens直接使用原始ID，不需要任何偏移
         let text_tokens: Vec<i32> = text_tokens_raw.clone();
 
-        debug!(
-            "🔍 [{}] 文本编码结果: 原始={:?}, 最终={:?} (长度: {})",
-            request_id,
-            text_tokens_raw,
-            text_tokens,
-            text_tokens.len()
-        );
+        // 文本编码结果
 
         // 释放原始tokens变量
         drop(text_tokens_raw);
@@ -550,13 +483,13 @@ impl DynamicBatchManager {
             request.ref_global_tokens.is_some() && request.ref_semantic_tokens.is_some();
 
         if is_zero_shot {
-            info!("🎯 [{}] 检测到Zero-shot模式，调用专用推理函数", request_id);
+            // 检测到Zero-shot模式，调用专用推理函数
             return execute_zero_shot_inference(&infer_context, request, text_tokens, Some(rng))
                 .await;
         }
 
         // 普通模式推理
-        info!("🎯 [{}] 普通模式推理，调用专用推理函数", request_id);
+        // 普通模式推理，调用专用推理函数
         return execute_normal_inference(&infer_context, request, text_tokens).await;
     }
 

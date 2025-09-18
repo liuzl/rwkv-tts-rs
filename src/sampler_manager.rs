@@ -8,11 +8,9 @@ use rand::Rng;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::debug;
-// use web_rwkv::runtime::model::State; // 暂时注释掉未使用的导入
+// 删除未使用的导入
 
 use crate::batch_types::TtsInferOptions;
-// use crate::shared_runtime::TtsInferContext; // 暂时注释掉未使用的导入
 
 /// 采样策略枚举
 #[derive(Debug, Clone)]
@@ -80,8 +78,8 @@ impl Default for SamplingParams {
 pub struct SamplerManager {
     /// 默认采样参数
     default_params: SamplingParams,
-    /// 参数缓存
-    params_cache: Arc<Mutex<HashMap<String, SamplingParams>>>,
+    /// 参数缓存（使用RwLock优化读多写少场景）
+    params_cache: Arc<tokio::sync::RwLock<HashMap<String, SamplingParams>>>,
     /// 随机数生成器
     rng: Arc<Mutex<rand::rngs::StdRng>>,
 }
@@ -93,7 +91,7 @@ impl SamplerManager {
 
         Self {
             default_params: default_params.unwrap_or_default(),
-            params_cache: Arc::new(Mutex::new(HashMap::new())),
+            params_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             rng: Arc::new(Mutex::new(rand::rngs::StdRng::from_entropy())),
         }
     }
@@ -131,8 +129,7 @@ impl SamplerManager {
         // 验证参数
         self.validate_params(&params)?;
 
-        #[cfg(debug_assertions)]
-        debug!("📊 解析采样参数: {:?}", params);
+        // 解析采样参数
         Ok(params)
     }
 
@@ -224,8 +221,7 @@ impl SamplerManager {
             }
         };
 
-        #[cfg(debug_assertions)]
-        debug!("🎲 采样结果: token={}", token);
+        // 采样结果
         Ok(token)
     }
 
@@ -461,15 +457,18 @@ impl SamplerManager {
 
     /// 从概率分布中采样
     async fn sample_from_probs(&self, probs: &[f32], seed: Option<u64>) -> Result<usize> {
-        let mut rng = self.rng.lock().await;
-
-        // 如果提供了种子，创建新的RNG
+        // 优化：减少锁持有时间，只在需要生成随机数时获取锁
         let random_val = if let Some(s) = seed {
+            // 如果提供了种子，创建新的RNG，无需获取锁
             use rand::SeedableRng;
             let mut seeded_rng = rand::rngs::StdRng::seed_from_u64(s);
             seeded_rng.gen::<f32>()
         } else {
-            rng.gen::<f32>()
+            // 只在生成随机数时短暂持有锁
+            let mut rng = self.rng.lock().await;
+            let val = rng.gen::<f32>();
+            drop(rng); // 显式释放锁
+            val
         };
 
         let mut cumsum = 0.0;
@@ -503,7 +502,7 @@ impl SamplerManager {
 
     /// 获取采样统计信息
     pub async fn stats(&self) -> SamplerStats {
-        let cache = self.params_cache.lock().await;
+        let cache = self.params_cache.read().await;
         SamplerStats {
             cached_params: cache.len(),
         }

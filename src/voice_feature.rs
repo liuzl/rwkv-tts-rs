@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tokio::fs as async_fs;
-use tracing::{debug, info, warn};
+use tracing::warn;
 
 /// 音色特征数据结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,14 +76,13 @@ impl VoiceFeatureManager {
         // 确保RAF目录存在
         if !raf_dir.exists() {
             fs::create_dir_all(&raf_dir).map_err(|e| anyhow!("创建RAF目录失败: {}", e))?;
-            info!("创建RAF目录: {:?}", raf_dir);
+            // 创建RAF目录
         }
 
-        // 确保临时目录存在
+        // 确保上传目录存在
         let temp_dir = raf_dir.join("temp").join("upload_temp_files");
         if !temp_dir.exists() {
-            fs::create_dir_all(&temp_dir).map_err(|e| anyhow!("创建临时目录失败: {}", e))?;
-            info!("创建临时目录: {:?}", temp_dir);
+            fs::create_dir_all(&temp_dir).map_err(|e| anyhow!("创建上传目录失败: {}", e))?;
         }
 
         Ok(Self {
@@ -130,7 +129,7 @@ impl VoiceFeatureManager {
 
         self.add_voice_metadata(metadata).await?;
 
-        info!("保存音色特征文件: {:?}", file_path);
+        // 保存音色特征文件
         Ok(file_name)
     }
 
@@ -153,12 +152,7 @@ impl VoiceFeatureManager {
             bincode::serde::decode_from_slice(&data, bincode::config::standard())
                 .map_err(|e| anyhow!("反序列化音色特征失败: {}", e))?;
 
-        debug!(
-            "加载音色特征: {} (global: {}, semantic: {})",
-            voice_id,
-            voice_feature.global_tokens.len(),
-            voice_feature.semantic_tokens.len()
-        );
+        // 保存音色特征到文件
 
         Ok(voice_feature)
     }
@@ -179,7 +173,7 @@ impl VoiceFeatureManager {
             async_fs::remove_file(&file_path)
                 .await
                 .map_err(|e| anyhow!("删除音色特征文件失败: {}", e))?;
-            info!("删除音色特征文件: {:?}", file_path);
+            // 删除音色特征文件
         }
 
         // 从元数据中移除
@@ -204,7 +198,7 @@ impl VoiceFeatureManager {
         // 保存更新后的元数据
         self.save_metadata_collection(&metadata_collection).await?;
 
-        info!("重命名音色: {} -> {}", voice_id, new_name);
+        // 重命名音色
         Ok(())
     }
 
@@ -272,7 +266,7 @@ impl VoiceFeatureManager {
         &self.raf_dir
     }
 
-    /// 获取临时目录路径
+    /// 获取上传目录路径
     pub fn temp_dir(&self) -> PathBuf {
         self.raf_dir.join("temp").join("upload_temp_files")
     }
@@ -293,7 +287,7 @@ pub async fn extract_voice_feature_from_audio(
     prompt_text: &str,
     voice_name: &str,
 ) -> Result<VoiceFeature> {
-    // TODO: 实现实际的音色特征提取逻辑
+    // 实现音色特征提取逻辑
     // 这里是占位符实现，需要集成实际的音频处理和模型推理
 
     let voice_id = VoiceFeatureManager::generate_voice_id();
@@ -315,6 +309,6 @@ pub async fn extract_voice_feature_from_audio(
         checksum,
     };
 
-    info!("提取音色特征完成: {} ({})", voice_name, voice_feature.id);
+    // 提取音色特征完成
     Ok(voice_feature)
 }

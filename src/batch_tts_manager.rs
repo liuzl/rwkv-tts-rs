@@ -42,7 +42,7 @@ impl BatchTtsManager {
         // 创建全局RWKV采样器，不使用量化配置
         let quant_config = None;
         let sampler = RwkvSampler::new(model_path, vocab_path, quant_config, 256).await?;
-        info!("全局RWKV采样器创建成功，batch_size: {}", batch_size);
+        // 全局RWKV采样器创建成功
         
         // 初始化参考音频工具
         let ref_audio_utilities = Arc::new(Mutex::new(
@@ -116,7 +116,7 @@ impl BatchTtsManager {
         let mut pending_requests = Vec::new();
         let batch_timeout = Duration::from_millis(batch_timeout_ms);
         
-        info!("批处理工作线程启动，batch_size: {}, timeout: {}ms", batch_size, batch_timeout_ms);
+        // 批处理工作线程启动
         
         loop {
             // 收集请求直到达到批次大小或超时
@@ -128,7 +128,7 @@ impl BatchTtsManager {
                         false // 继续收集更多请求
                     }
                     None => {
-                        info!("请求通道关闭，批处理工作线程退出");
+                        // 请求通道关闭，批处理工作线程退出
                         break;
                     }
                 }
@@ -140,7 +140,7 @@ impl BatchTtsManager {
                         pending_requests.len() >= batch_size
                     }
                     Ok(None) => {
-                        info!("请求通道关闭，处理剩余请求后退出");
+                        // 请求通道关闭，处理剩余请求后退出
                         true // 处理剩余请求
                     }
                     Err(_) => {
@@ -154,21 +154,20 @@ impl BatchTtsManager {
                 let batch_requests = std::mem::take(&mut pending_requests);
                 let batch_count = batch_requests.len();
                 
-                info!("开始处理批次，请求数量: {}", batch_count);
+                // 开始处理批次
                 let start_time = std::time::Instant::now();
                 
                 // 处理批次
                 Self::process_batch(&mut sampler, batch_requests).await;
                 
                 let elapsed = start_time.elapsed();
-                info!("批次处理完成，耗时: {:.2}ms，平均每请求: {:.2}ms", 
-                     elapsed.as_millis(), elapsed.as_millis() as f64 / batch_count as f64);
+                // 批次处理完成
             }
         }
         
         // 处理剩余请求
         if !pending_requests.is_empty() {
-            info!("处理剩余 {} 个请求", pending_requests.len());
+            // 处理剩余请求
             Self::process_batch(&mut sampler, pending_requests).await;
         }
     }
@@ -179,7 +178,7 @@ impl BatchTtsManager {
         requests: Vec<TtsRequest>,
     ) {
         let batch_size = requests.len();
-        info!("🔄 处理批次，大小: {} (状态隔离模式)", batch_size);
+        // 处理批次 (状态隔离模式)
         
         if requests.len() == 1 {
             // 单个请求，使用单独处理 - 确保状态隔离
@@ -187,7 +186,7 @@ impl BatchTtsManager {
             
             // 关键修复：单个请求处理前也进行状态重置
             sampler.reset();
-            info!("🔄 单个请求处理前已重置状态");
+            // 单个请求处理前已重置状态
             
             let result = sampler.generate_tts_tokens(
                 &request.text,
@@ -199,7 +198,7 @@ impl BatchTtsManager {
             
             // 单个请求处理后也进行状态重置
             sampler.reset();
-            info!("🔄 单个请求处理后已重置状态");
+            // 单个请求处理后已重置状态
             
             if let Err(_) = request.response_tx.send(result) {
                 warn!("无法发送单个请求响应，接收方已关闭");
@@ -221,7 +220,7 @@ impl BatchTtsManager {
                     // 发送结果给各个请求
                     for (request, result) in requests.into_iter().zip(results.into_iter()) {
                         if let Err(_) = request.response_tx.send(Ok(result)) {
-                            warn!("无法发送批处理请求响应，接收方已关闭");
+                            // 无法发送响应
                         }
                     }
                 }

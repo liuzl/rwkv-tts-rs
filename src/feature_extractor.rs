@@ -7,8 +7,8 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, info, warn};
-// use web_rwkv::runtime::model::State; // 暂时注释掉未使用的导入
+// 删除未使用的导入
+
 use web_rwkv::tokenizer::Tokenizer;
 
 use crate::batch_types::TtsInferOptions;
@@ -38,7 +38,7 @@ impl FeatureExtractor {
 
         // 检查缓存
         if let Some(cached_tokens) = self.get_cached_features(text).await {
-            debug!("🎯 使用缓存特征: {} tokens", cached_tokens.len());
+            // 使用缓存特征
             return Ok(cached_tokens);
         }
 
@@ -51,7 +51,7 @@ impl FeatureExtractor {
         // 缓存结果
         self.cache_features(text.clone(), tokens.clone()).await;
 
-        info!("✅ 提取特征完成: {} -> {} tokens", text.len(), tokens.len());
+        // 提取特征完成
         Ok(tokens)
     }
 
@@ -70,7 +70,7 @@ impl FeatureExtractor {
             processed = processed.replace("  ", " ");
         }
 
-        debug!("📝 文本预处理: '{}' -> '{}'", text, processed);
+        // 文本预处理完成
         Ok(processed)
     }
 
@@ -83,11 +83,7 @@ impl FeatureExtractor {
             .map(|&id| id as u16)
             .collect::<Vec<u16>>();
 
-        debug!(
-            "🔤 Token化完成: {} chars -> {} tokens",
-            text.len(),
-            tokens.len()
-        );
+        // Token化完成
         Ok(tokens)
     }
 
@@ -108,18 +104,18 @@ impl FeatureExtractor {
             for key in keys_to_remove {
                 cache.remove(&key);
             }
-            warn!("🧹 缓存已满，清理了 {} 个条目", cache.len() / 2);
+            // 缓存已满，清理了条目
         }
 
         cache.insert(text, tokens);
-        debug!("💾 缓存特征，当前缓存大小: {}", cache.len());
+        // 缓存特征
     }
 
     /// 清理缓存
     pub async fn clear_cache(&self) {
         let mut cache = self.feature_cache.lock().await;
         cache.clear();
-        info!("🧹 清理特征缓存");
+        // 清理特征缓存
     }
 
     /// 获取缓存统计
@@ -162,7 +158,7 @@ impl PreExtractProcessor {
             results.push(tokens);
         }
 
-        info!("✅ 批量预提取完成: {} 个请求", contexts.len());
+        // 批量预提取完成
         Ok(results)
     }
 

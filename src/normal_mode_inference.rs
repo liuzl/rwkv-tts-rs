@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
-use tracing::{debug, info, warn};
+use tracing::warn;
 use web_rwkv::runtime::infer::{RnnInput, RnnInputBatch, RnnOption};
 
 use crate::shared_runtime::TtsInferContext;
@@ -13,10 +13,7 @@ pub async fn execute_normal_inference(
     text_tokens: Vec<i32>,
 ) -> Result<(Vec<i32>, Vec<i32>)> {
     let request_id = &infer_context.request_id;
-    info!(
-        "🚀 [{}] 开始普通模式推理 - 文本: '{}'",
-        request_id, request.text
-    );
+    // 开始普通模式推理
 
     // 为本次请求创建独立RNG（可复现且互不干扰）
     // 普通模式不是声音克隆，使用正常的随机数生成逻辑
@@ -37,18 +34,13 @@ pub async fn execute_normal_inference(
     input_tokens.extend_from_slice(&text_tokens);
     input_tokens.push(crate::rwkv_sampler::TTS_TAG_0);
 
-    debug!(
-        "🔍 [{}] 完整输入序列: {:?} (长度: {})",
-        request_id,
-        input_tokens,
-        input_tokens.len()
-    );
+    // 构建完整输入序列
 
     // === Prefill 阶段 ===
     let input_tokens_u32: Vec<u32> = input_tokens.iter().map(|&t| t as u32).collect();
     let token_chunk_size = request.args.token_chunk_size;
 
-    info!("🔧 [{}] Prefill阶段 - 初始化独立状态", request_id);
+    // Prefill阶段 - 初始化独立状态
 
     // 创建独立的推理上下文
     let batch = RnnInputBatch::new(input_tokens_u32.clone(), RnnOption::Last);
@@ -59,7 +51,7 @@ pub async fn execute_normal_inference(
         let state_guard = state.lock().await;
         let initial_state = state_guard.init();
         state_guard.load(initial_state, 0)?;
-        info!("🔧 [{}] 已为批处理槽位0加载初始状态", request_id);
+        // 已为批处理槽位0加载初始状态
     }
 
     // 消化输入直到产生输出
@@ -121,11 +113,7 @@ pub async fn execute_normal_inference(
         Some(rng.clone())
     };
 
-    // 添加RNG状态调试日志
-    info!(
-        "🔍 [{}] RNG状态: seed={:?}, use_independent_seeds={}, global_rng=Some, semantic_rng=Some",
-        request_id, sampler_args.seed, sampler_args.layered_randomness.use_independent_seeds
-    );
+    // RNG状态初始化
 
     // 应用音色保真度调整
     let global_fidelity_factor = sampler_args.voice_fidelity;
@@ -138,22 +126,10 @@ pub async fn execute_normal_inference(
     args_global.top_k =
         ((args_global.top_k as f32) * (0.9 + 0.1 * global_conservative_factor)).max(5.0) as usize;
 
-    // Semantic阶段使用固定参数，避免重复循环
-    info!(
-        "🔍 [{}] Semantic阶段采样参数: temperature={:.2}, top_p={:.2}, top_k={} (固定参数，与Python一致)",
-        request_id, args_semantic.temperature, args_semantic.top_p, args_semantic.top_k
-    );
+    // Semantic阶段使用固定参数
 
-    // 生成32个global tokens - 增强参考音频特征权重
+    // 生成32个global tokens
     let global_tokens_size: usize = 32;
-    info!(
-        "🔍 [{}] 开始生成 {} 个global tokens",
-        request_id, global_tokens_size
-    );
-    info!(
-        "🔍 [{}] Global阶段采样参数: temperature={:.2}, top_p={:.2}, top_k={}",
-        request_id, args_global.temperature, args_global.top_p, args_global.top_k
-    );
 
     for i in 0..global_tokens_size {
         let logits: Vec<f32> = if i == 0 {
@@ -209,27 +185,14 @@ pub async fn execute_normal_inference(
         // 反馈到模型：直接使用原始ID（与C++代码一致）
         inference.batches[0].push(next_id as u32);
 
-        #[cfg(debug_assertions)]
-        debug!(
-            "🔍 [{}] Global token {}: 采样={}, 反馈={}",
-            request_id, i, next_id, next_id
-        );
+        // Global token生成
     }
 
-    info!(
-        "✅ [{}] Global tokens生成完成: {:?} (共{}个)",
-        request_id,
-        global_tokens,
-        global_tokens.len()
-    );
+    // Global tokens生成完成
 
     // === 切换到 Semantic 阶段 ===
     inference.batches[0].push(crate::rwkv_sampler::TTS_TAG_1 as u32);
-    info!(
-        "🔍 [{}] 切换到Semantic阶段，推入TTS_TAG_1={}",
-        request_id,
-        crate::rwkv_sampler::TTS_TAG_1
-    );
+    // 切换到Semantic阶段
 
     // 让标签生效，直到产生输出，并保留logits供首步使用
     let last_sem_logits: Vec<f32> = loop {
@@ -242,10 +205,7 @@ pub async fn execute_normal_inference(
 
     // 语义阶段：限制最大生成步数为2048
     let semantic_limit: usize = usize::min(request.args.max_tokens, 2048);
-    info!(
-        "🔍 [{}] 开始生成semantic tokens，最大限制: {}",
-        request_id, semantic_limit
-    );
+    // 开始生成semantic tokens
 
     for i in 0..semantic_limit {
         let logits: Vec<f32> = if i == 0 {
@@ -282,13 +242,12 @@ pub async fn execute_normal_inference(
 
         // 注意：不屏蔽EOS token，让它能够被正常采样以终止生成
 
-        // 添加调试日志：输出EOS token的logits值
-        let eos_logit = if (crate::rwkv_sampler::TTS_EOS_TOKEN as usize) < logits_masked.len() {
+        // EOS token logits检查
+        let _eos_logit = if (crate::rwkv_sampler::TTS_EOS_TOKEN as usize) < logits_masked.len() {
             logits_masked[crate::rwkv_sampler::TTS_EOS_TOKEN as usize]
         } else {
             f32::NEG_INFINITY
         };
-
 
         // 直接使用屏蔽后的logits进行采样
         let next_id = crate::rwkv_sampler::sample_logits(
@@ -298,16 +257,11 @@ pub async fn execute_normal_inference(
             &mut semantic_rng,
         );
 
-
         // 检查是否遇到EOS token（必须在范围检查之前）
         if next_id == crate::rwkv_sampler::TTS_EOS_TOKEN as usize {
-            info!(
-                "🔍 [{}] 正常模式遇到EOS token({}), 停止生成",
-                request_id, next_id
-            );
+            // 遇到EOS token，停止生成
             break;
         }
-
 
         // 额外检查：确保token在semantic范围内 [0..8192)（修复：应该是>8192而不是>=8192）
         if next_id > crate::rwkv_sampler::TTS_EOS_TOKEN as usize {
@@ -323,7 +277,6 @@ pub async fn execute_normal_inference(
         // 反馈到模型：语义阶段直接使用原始token（不加偏移）
         inference.batches[0].push(next_id as u32);
     }
-
 
     Ok((global_tokens, semantic_tokens))
 }

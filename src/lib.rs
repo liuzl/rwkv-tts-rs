@@ -47,7 +47,7 @@ pub mod tts_generator {
     // TTS Generator implementation
 
     use crate::{RefAudioUtilities, RwkvSampler};
-    // use crate::{TtsPipeline, TtsPipelineArgs}; // 已移动到备份目录
+
     use anyhow::Result;
 
     /// Args结构体定义
@@ -116,7 +116,6 @@ pub mod tts_generator {
 
         /// 生成语音 (暂时禁用，因为TtsPipeline已移动到备份目录)
         pub async fn generate(&self, _text: &str, _args: &Args) -> Result<Vec<f32>> {
-            // TODO: 使用lightweight_tts_pipeline替代
             Err(anyhow::anyhow!(
                 "TtsPipeline已移动到备份目录，请使用lightweight_tts_pipeline"
             ))
@@ -130,7 +129,7 @@ pub mod tts_generator {
             sample_rate: u32,
         ) -> Result<()> {
             // 保存音频到WAV文件
-            println!("保存音频到: {}", output_path);
+            // 保存音频到指定路径
 
             // 使用hound库保存WAV文件
             let spec = hound::WavSpec {

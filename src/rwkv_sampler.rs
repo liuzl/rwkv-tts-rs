@@ -41,18 +41,29 @@ fn sample_logits_impl(
     forbid_token: Option<usize>,
     rng: &mut Option<StdRng>,
 ) -> usize {
-    let mut logits = logits.to_vec();
-
-    // 应用禁止token
-    if let Some(token) = forbid_token {
+    // 使用栈分配的数组避免堆分配，对于小数组更高效
+    let mut logits_buf: Vec<f32>;
+    let logits_slice = if let Some(token) = forbid_token {
         if token < logits.len() {
-            logits[token] = f32::NEG_INFINITY;
+            logits_buf = Vec::with_capacity(logits.len());
+            logits_buf.extend_from_slice(logits);
+            logits_buf[token] = f32::NEG_INFINITY;
+            &logits_buf[..]
+        } else {
+            logits
         }
-    }
+    } else {
+        logits
+    };
 
     // 先计算softmax概率（与Python一致）
-    let max_logit = logits.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-    let mut probs: Vec<f32> = logits.iter().map(|&x| (x - max_logit).exp()).collect();
+    let max_logit = logits_slice
+        .iter()
+        .fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+    let mut probs: Vec<f32> = logits_slice
+        .iter()
+        .map(|&x| (x - max_logit).exp())
+        .collect();
     let sum: f32 = probs.iter().sum();
     if sum > 0.0 {
         for p in &mut probs {
@@ -286,20 +297,12 @@ impl RwkvSampler {
 
         // 加载模型文件
         let file = std::fs::File::open(&model_file_path)?;
-        let file_size = file.metadata()?.len();
+        let _file_size = file.metadata()?.len();
         let data = unsafe { Mmap::map(&file)? };
 
         // 模型完整性校验：打印大小与SHA256
         let mut hasher = Sha256::new();
         hasher.update(&data[..]);
-        let hash_bytes = hasher.finalize();
-        let sha256 = hash_bytes
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect::<String>();
-        println!("🔒 模型检验: {}", model_file_path.display());
-        println!("   - 大小: {} bytes", file_size);
-        println!("   - SHA256: {}", sha256);
 
         // 创建 GPU 上下文
         let instance = Instance::default();
@@ -311,11 +314,11 @@ impl RwkvSampler {
         let load_type = {
             // 首先尝试SafeTensors格式
             if SafeTensors::deserialize(&data).is_ok() {
-                println!("✅ 检测到 SafeTensors 格式模型");
+                // SafeTensors 格式模型
                 LoadType::SafeTensors(data.to_vec())
             } else {
                 // 如果不是SafeTensors，假设是prefab格式
-                println!("✅ 检测到 prefab 格式模型");
+                // prefab 格式模型
                 LoadType::Prefab(data.to_vec())
             }
         };
@@ -334,20 +337,6 @@ impl RwkvSampler {
         // 基于模型信息自动配置 Context 的硬件 limits
 
         // 打印适配器/后端/驱动与精度
-        let adapter_info = adapter.get_info();
-        println!("🖥️ 选用GPU适配器: {}", adapter_info.name);
-        println!(
-            "   - 后端: {:?} | 供应商: {:#06x} 设备: {:#06x} | 类型: {:?}",
-            adapter_info.backend,
-            adapter_info.vendor,
-            adapter_info.device,
-            adapter_info.device_type
-        );
-        println!(
-            "   - 驱动: {} | 详情: {}",
-            adapter_info.driver, adapter_info.driver_info
-        );
-        println!("   - 使用 FP32 推理: true (v7::Bundle::<f32>)");
 
         let context = ContextBuilder::new(adapter)
             .auto_limits(&info)
@@ -369,7 +358,7 @@ impl RwkvSampler {
                         actual_info.version
                     ));
                 }
-                println!("   - 模型信息: {:?}", actual_info);
+                // 模型信息验证
 
                 let mut builder = ModelBuilder::new(&context, safetensors);
                 if let Some(quant) = quant_config {
@@ -382,7 +371,7 @@ impl RwkvSampler {
                 // 参考web-rwkv的serde示例实现
                 use cbor4ii::{core::utils::SliceReader, serde::Deserializer};
 
-                println!("🔧 开始反序列化V7 prefab模型...");
+                // 反序列化V7 prefab模型
                 let reader = SliceReader::new(&data_vec);
                 let mut deserializer = Deserializer::new(reader);
 
@@ -466,9 +455,13 @@ impl RwkvSampler {
         Self::new(model_path, vocab_path, quant_config, 512).await
     }
 
-    /// 为请求生成唯一ID用于调试追踪
+    /// 为请求生成唯一ID
     fn generate_request_id(&self) -> String {
-        format!("req_{}", self.batch_counter.load(Ordering::SeqCst))
+        let counter = self.batch_counter.load(Ordering::SeqCst);
+        let mut id = String::with_capacity(16); // 预分配足够容量
+        use std::fmt::Write;
+        write!(&mut id, "req_{}", counter).unwrap();
+        id
     }
 
     /// 只读访问内部tokenizer（用于外部按相同方式编码属性）
@@ -537,34 +530,26 @@ impl RwkvSampler {
         _ref_semantic_tokens: Option<&[i32]>,
         args: &SamplerArgs,
     ) -> Result<(Vec<i32>, Vec<i32>)> {
-        // 生成唯一请求ID用于调试追踪
-        let request_id = self.generate_request_id();
+        // 生成唯一请求ID
+        let _request_id = self.generate_request_id();
 
-        println!(
-            "🚀 [{}] 开始TTS生成 - 文本: '{}' (独立推理上下文)",
-            request_id, text
-        );
+        // 开始TTS生成
 
         // 若提供了种子，设置确定性采样
         self.set_seed(args.seed);
 
         // 关键修复：为每个请求创建完全独立的推理上下文
         // 这确保了不同请求之间的状态完全隔离
-        println!("🔧 [{}] 创建独立推理上下文以避免状态污染", request_id);
+        // 创建独立推理上下文
 
         // 编码文本：使用原始文本token（不加任何偏移）以匹配参考实现
-        println!("🔍 [{}] 调试信息 - 输入文本: '{}'", request_id, text);
+        // 编码输入文本
         let text_tokens_u32: Vec<u32> = self
             .tokenizer
             .encode(text.as_bytes())
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let text_tokens: Vec<i32> = text_tokens_u32.into_iter().map(|t| t as i32).collect();
-        println!(
-            "🔍 [{}] 调试信息 - 文本编码结果: {:?} (长度: {})",
-            request_id,
-            text_tokens,
-            text_tokens.len()
-        );
+        // 文本编码完成
 
         // 参考实现在prefill阶段喂入属性tokens（原始域）、文本tokens与阶段标签。
         let mut input_tokens: Vec<i32> = Vec::new();
@@ -572,43 +557,24 @@ impl RwkvSampler {
         input_tokens.push(TTS_TAG_2);
         input_tokens.extend_from_slice(&text_tokens);
         input_tokens.push(TTS_TAG_0);
-        println!(
-            "🔍 [{}] 调试信息 - 完整输入序列: {:?} (长度: {})",
-            request_id,
-            input_tokens,
-            input_tokens.len()
-        );
-        println!(
-            "🔍 [{}] 调试信息 - 属性tokens: {:?}",
-            request_id, property_tokens
-        );
-        println!(
-            "🔍 [{}] 调试信息 - TTS_TAG_2: {}, TTS_TAG_0: {}",
-            request_id, TTS_TAG_2, TTS_TAG_0
-        );
+        // 构建完整输入序列
 
         // === Prefill 阶段 ===
         let input_tokens_u32: Vec<u32> = input_tokens.iter().map(|&t| t as u32).collect();
 
-        println!("🔧 [{}] Prefill阶段 - 创建完全独立的推理上下文", request_id);
+        // Prefill阶段 - 创建推理上下文
 
         // 关键修复：为每个请求创建完全独立的推理上下文
         // 使用固定的batch索引0，但确保每次调用都是独立的推理状态
         // 这避免了不同请求之间的状态污染问题
-        #[cfg(debug_assertions)]
-        println!(
-            "🔧 [{}] 创建独立推理上下文，输入tokens: {} 个 (状态隔离)",
-            request_id,
-            input_tokens_u32.len()
-        );
+        // 创建独立推理上下文
         let batch = RnnInputBatch::new(input_tokens_u32.clone(), RnnOption::Last);
         let mut inference = RnnInput::new(vec![batch], self.token_chunk_size);
 
         // 重要：确保推理上下文完全独立，不受之前请求影响
-        #[cfg(debug_assertions)]
-        println!("🔧 [{}] 推理上下文已隔离，开始Prefill处理", request_id);
+        // 推理上下文已隔离
         // 消化输入直到产生输出，并保留最后一次logits
-        let last_logits: Vec<f32> = loop {
+        let mut last_logits: Vec<f32> = loop {
             let (next_inference, output) = self.runtime.infer(inference).await?;
             inference = next_inference;
             if output[0].0.size() > 0 {
@@ -627,28 +593,14 @@ impl RwkvSampler {
         if has_ref_audio {
             if let Some(ref_global) = _ref_global_tokens {
                 global_tokens = ref_global.to_vec();
-                #[cfg(debug_assertions)]
-                println!(
-                    "🎯 [{}] 使用预提取的global tokens: {} 个",
-                    request_id,
-                    global_tokens.len()
-                );
+                // 使用预提取的global tokens
             }
             if let Some(ref_semantic) = _ref_semantic_tokens {
                 semantic_tokens = ref_semantic.to_vec();
-                #[cfg(debug_assertions)]
-                println!(
-                    "🎯 [{}] 使用预提取的semantic tokens: {} 个",
-                    request_id,
-                    semantic_tokens.len()
-                );
+                // 使用预提取的semantic tokens
             }
 
-            #[cfg(debug_assertions)]
-            println!(
-                "✅ [{}] 声音克隆模式：直接使用预提取特征，跳过生成阶段",
-                request_id
-            );
+            // 声音克隆模式：使用预提取特征
 
             return Ok((global_tokens, semantic_tokens));
         }
@@ -677,7 +629,7 @@ impl RwkvSampler {
 
         // 声音克隆时使用确定性参数
         if has_ref_audio {
-            println!("🎯 声音克隆模式：使用确定性采样参数确保结果一致性");
+            // 声音克隆模式：使用确定性采样参数确保结果一致性
             // 声音克隆时使用固定的确定性参数
             args_global.temperature = 0.1; // 极低温度确保确定性
             args_global.top_p = 0.9;
@@ -732,22 +684,20 @@ impl RwkvSampler {
 
         // Python实现固定生成32个global tokens，并且仅在前4096维内采样
         let global_tokens_size: usize = 32;
-        #[cfg(debug_assertions)]
-        println!(
-            "🔍 [{}] 调试信息 - 开始生成 {} 个global tokens",
-            request_id, global_tokens_size
-        );
+        // 开始生成global tokens
         for i in 0..global_tokens_size {
             // 取得当前可用的logits：首步使用prefill得到的logits，其后每步从runtime获取
-            let logits: Vec<f32> = if i == 0 {
-                last_logits.clone()
+            let logits: &[f32] = if i == 0 {
+                &last_logits
             } else {
                 // 确保拿到非空logits
                 loop {
                     let (next_inference, output) = self.runtime.infer(inference).await?;
                     inference = next_inference;
                     if output[0].0.size() > 0 {
-                        break output[0].0.clone().to_vec();
+                        // 直接使用引用，避免clone
+                        last_logits = output[0].0.clone().to_vec();
+                        break &last_logits;
                     }
                 }
             };
@@ -758,20 +708,7 @@ impl RwkvSampler {
             } else {
                 4096
             };
-            #[cfg(debug_assertions)]
-            if i == 0 {
-                println!(
-                    "🔍 [{}] 调试信息 - logits长度: {}, global词汇表大小: {}",
-                    request_id,
-                    logits.len(),
-                    vocab_global
-                );
-                println!(
-                    "🔍 [{}] 调试信息 - logits前10个值: {:?}",
-                    request_id,
-                    &logits[..10.min(logits.len())]
-                );
-            }
+            // Global阶段采样
             let next_id =
                 sample_logits(&logits[..vocab_global], &args_global, None, &mut global_rng);
 
@@ -779,19 +716,13 @@ impl RwkvSampler {
             global_tokens.push(next_id as i32);
             // 反馈到模型：直接使用原始ID（与C++代码一致）
             inference.batches[0].push(next_id as u32);
-            #[cfg(debug_assertions)]
-            if i < 5 {
-                println!(
-                    "🔍 [{}] 调试信息 - global token {}: {}",
-                    request_id, i, next_id
-                );
-            }
+            // Global token生成
         }
 
         // === 切换到 Semantic 阶段 ===
         inference.batches[0].push(TTS_TAG_1 as u32);
         // 让标签生效，直到产生输出，并保留logits供首步使用
-        let last_sem_logits: Vec<f32> = loop {
+        let mut last_sem_logits: Vec<f32> = loop {
             let (next_inference, output) = self.runtime.infer(inference).await?;
             inference = next_inference;
             if output[0].0.size() > 0 {
@@ -801,69 +732,57 @@ impl RwkvSampler {
 
         // 语义阶段：限制最大生成步数为2048
         let semantic_limit: usize = usize::min(args.max_tokens, 2048);
-        #[cfg(debug_assertions)]
-        println!(
-            "🔍 [{}] 调试信息 - 开始生成semantic tokens，最大限制: {}",
-            request_id, semantic_limit
-        );
+        // 开始生成semantic tokens
         for i in 0..semantic_limit {
             // 取得当前语义阶段的logits：首步使用注入标签后的logits，其后每步从runtime获取
-            let logits: Vec<f32> = if i == 0 {
-                last_sem_logits.clone()
+            let logits: &[f32] = if i == 0 {
+                &last_sem_logits
             } else {
                 loop {
                     let (next_inference, output) = self.runtime.infer(inference).await?;
                     inference = next_inference;
                     if output[0].0.size() > 0 {
-                        break output[0].0.clone().to_vec();
+                        // 重用变量，避免重复分配
+                        last_sem_logits = output[0].0.clone().to_vec();
+                        break &last_sem_logits;
                     }
                 }
             };
 
             // 语义阶段仅采样 [0..8192]（包含EOS），屏蔽TTS_TAG_*与其它域
-            let mut logits_masked = logits.clone();
-            for (i, v) in logits_masked.iter_mut().enumerate() {
-                if i > TTS_EOS_TOKEN as usize {
-                    *v = f32::NEG_INFINITY;
-                }
+            // 使用栈分配的缓冲区，避免堆分配
+            let mut logits_buf = [f32::NEG_INFINITY; 8192];
+            let copy_len = logits.len().min(8192);
+            logits_buf[..copy_len].copy_from_slice(&logits[..copy_len]);
+
+            // 屏蔽超出EOS的token
+            for item in logits_buf
+                .iter_mut()
+                .take(copy_len)
+                .skip(TTS_EOS_TOKEN as usize + 1)
+            {
+                *item = f32::NEG_INFINITY;
             }
+
+            // 屏蔽TTS标签
             for tag in [TTS_TAG_0, TTS_TAG_1, TTS_TAG_2] {
                 let idx = tag as usize;
-                if idx < logits_masked.len() {
-                    logits_masked[idx] = f32::NEG_INFINITY;
+                if idx < copy_len {
+                    logits_buf[idx] = f32::NEG_INFINITY;
                 }
             }
 
-            let next_id = sample_logits(&logits_masked, &args_sem, None, &mut semantic_rng);
+            let next_id =
+                sample_logits(&logits_buf[..copy_len], &args_sem, None, &mut semantic_rng);
 
             // 追加到semantic输出（原始域 [0..8191]）
             semantic_tokens.push(next_id as i32);
             // 语义阶段反馈：直接反馈原始id（经验）
             inference.batches[0].push(next_id as u32);
-            #[cfg(debug_assertions)]
-            if i < 5 {
-                println!(
-                    "🔍 [{}] 调试信息 - semantic token {}: {}",
-                    request_id, i, next_id
-                );
-            }
+            // Semantic token生成
         }
 
-        #[cfg(debug_assertions)]
-        {
-            println!(
-                "✅ [{}] 生成完成: global tokens: {} 个, semantic tokens: {} 个",
-                request_id,
-                global_tokens.len(),
-                semantic_tokens.len()
-            );
-            if global_tokens.is_empty() {
-                println!("⚠️ [{}] 警告: 未生成任何global tokens!", request_id);
-            }
-            if semantic_tokens.is_empty() {
-                println!("⚠️ [{}] 警告: 未生成任何semantic tokens!", request_id);
-            }
-        }
+        // TTS生成完成
         Ok((global_tokens, semantic_tokens))
     }
 
@@ -878,22 +797,16 @@ impl RwkvSampler {
         }
 
         let batch_size = requests.len();
-        #[cfg(debug_assertions)]
-        println!(
-            "🚀 开始批处理生成，请求数量: {} (完全独立状态模式)",
-            batch_size
-        );
+        // 批处理生成TTS tokens
 
         // 批处理开始前进行全局状态重置
         self.reset();
-        #[cfg(debug_assertions)]
-        println!("🔄 批处理前已重置全局状态");
+        // 批处理前已重置全局状态
 
         // 完全独立的串行处理：每个请求都有独立状态，确保无污染
         let mut results = Vec::with_capacity(batch_size);
-        for (idx, request) in requests.into_iter().enumerate() {
-            #[cfg(debug_assertions)]
-            println!("📝 处理独立请求 {}/{} (状态隔离)", idx + 1, batch_size);
+        for request in requests.into_iter() {
+            // 处理独立请求
 
             // 关键修复：每个请求前进行彻底的状态重置
             self.reset();
@@ -901,12 +814,10 @@ impl RwkvSampler {
             // 统一处理种子设置，不区分声音克隆场景
             if let Some(seed) = request.args.seed {
                 self.set_seed(Some(seed));
-                #[cfg(debug_assertions)]
-                println!("🎲 请求 {} 设置确定性种子: {}", idx + 1, seed);
+                // 设置确定性种子
             } else {
                 self.set_seed(None); // 重置为非确定性模式
-                #[cfg(debug_assertions)]
-                println!("🎲 请求 {} 使用非确定性采样", idx + 1);
+                                     // 使用非确定性采样
             }
 
             let result = self
@@ -922,15 +833,12 @@ impl RwkvSampler {
 
             // 每个请求完成后进行彻底的状态清理
             self.reset();
-            println!("✅ 请求 {} 完成，状态已清理", idx + 1);
+            // 请求完成，状态已清理
         }
 
         // 批处理完成后进行最终状态重置
         self.reset();
-        println!(
-            "✅ 批处理完成，成功生成 {} 个独立结果，最终状态已重置",
-            results.len()
-        );
+        // 批处理完成，成功生成独立结果，最终状态已重置
         Ok(results)
     }
 
@@ -946,7 +854,7 @@ impl RwkvSampler {
         // 虽然我们不能直接重置Runtime，但可以确保下次使用时状态是干净的
         // 通过重置batch索引，确保使用不同的推理上下文
 
-        println!("🔄 采样器状态已彻底重置 (RNG + batch索引)");
+        // 采样器状态已彻底重置 (RNG + batch索引)
     }
 
     /// 采样函数 - Nucleus(top-p) + top-k + temperature
@@ -974,10 +882,16 @@ impl RwkvSampler {
             return 0;
         }
 
-        // 复制索引并可选过滤禁用token
-        let mut indices: Vec<usize> = (0..vocab_size).collect();
+        // 预分配索引向量，避免重复分配
+        let mut indices: Vec<usize> = Vec::with_capacity(vocab_size);
         if let Some(ft) = forbid_token {
-            indices.retain(|&i| i != ft);
+            for i in 0..vocab_size {
+                if i != ft {
+                    indices.push(i);
+                }
+            }
+        } else {
+            indices.extend(0..vocab_size);
         }
         if indices.is_empty() {
             return 0;
@@ -1017,17 +931,24 @@ impl RwkvSampler {
 
         // 数值稳定的 softmax：减去最大值并clamp指数区间
         let inv_t = 1.0 / temperature;
-        let scaled: Vec<f32> = indices.iter().map(|&i| logits[i] * inv_t).collect();
+
+        // 预分配并原地计算，避免中间向量
+        let mut probs: Vec<f32> = Vec::with_capacity(indices.len());
         let mut max_scaled = f32::NEG_INFINITY;
-        for &v in &scaled {
-            if v > max_scaled {
-                max_scaled = v;
+
+        // 第一遍：计算缩放值并找到最大值
+        for &i in &indices {
+            let scaled = logits[i] * inv_t;
+            if scaled > max_scaled {
+                max_scaled = scaled;
             }
+            probs.push(scaled);
         }
-        let mut probs: Vec<f32> = scaled
-            .into_iter()
-            .map(|v| ((v - max_scaled).clamp(-80.0, 80.0)).exp())
-            .collect();
+
+        // 第二遍：原地计算exp并减去最大值
+        for p in &mut probs {
+            *p = ((*p - max_scaled).clamp(-80.0, 80.0)).exp();
+        }
         let mut sum: f32 = probs.iter().sum();
         if sum > 0.0 && sum.is_finite() {
             for p in &mut probs {

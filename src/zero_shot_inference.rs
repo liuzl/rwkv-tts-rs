@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
-use tracing::{debug, info, warn};
+use tracing::warn;
 use web_rwkv::runtime::infer::{RnnInput, RnnInputBatch, RnnOption};
 
 use crate::shared_runtime::TtsInferContext;
@@ -14,7 +14,7 @@ pub async fn execute_zero_shot_inference(
     rng: Option<rand::rngs::StdRng>,
 ) -> Result<(Vec<i32>, Vec<i32>)> {
     let request_id = &infer_context.request_id;
-    info!("🎯 [{}] 开始Zero-shot推理（复制普通模式结构）", request_id);
+    // 开始Zero-shot推理
 
     // 获取runtime
     let runtime = &infer_context.runtime;
@@ -31,12 +31,7 @@ pub async fn execute_zero_shot_inference(
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("Zero-shot模式需要预提取的semantic tokens"))?;
 
-    info!(
-        "🎯 [{}] 预提取音色特征: global tokens {} 个, semantic tokens {} 个",
-        request_id,
-        ref_global.len(),
-        ref_semantic.len()
-    );
+    // 文本tokens信息
 
     // 修正tokens范围，确保在有效范围内
     let corrected_global: Vec<i32> = ref_global.iter().map(|&t| t.clamp(0, 4095)).collect();
@@ -66,17 +61,19 @@ pub async fn execute_zero_shot_inference(
     // === Prefill 阶段（复制普通模式）===
     let input_tokens_u32: Vec<u32> = input_tokens.iter().map(|&t| t as u32).collect();
 
-    info!("🔧 [{}] Prefill阶段 - 初始化独立状态", request_id);
+    // Prefill阶段 - 初始化独立状态
 
     // 创建独立的推理上下文
     let batch = RnnInputBatch::new(input_tokens_u32.clone(), RnnOption::Last);
     let mut inference = RnnInput::new(vec![batch], token_chunk_size);
 
-    // 为批处理槽位0加载初始状态，确保状态隔离
+    // 为批处理槽位0加载初始状态，确保状态隔离（优化：合并二次锁操作）
     {
-        let initial_state = state.lock().await.init();
-        state.lock().await.load(initial_state, 0)?;
-        info!("🔧 [{}] 已为批处理槽位0加载初始状态", request_id);
+        let state_guard = state.lock().await;
+        let initial_state = state_guard.init();
+        state_guard.load(initial_state, 0)?;
+        drop(state_guard); // 显式释放锁
+                           // 已为批处理槽位0加载初始状态
     }
 
     // 消化输入直到产生输出
@@ -92,27 +89,18 @@ pub async fn execute_zero_shot_inference(
     let global_tokens: Vec<i32> = corrected_global.clone();
     let mut semantic_tokens: Vec<i32> = Vec::new();
 
-    info!(
-        "✅ [{}] 跳过Global tokens生成，直接使用预提取的tokens: {:?} (共{}个)",
-        request_id,
-        global_tokens,
-        global_tokens.len()
-    );
+    // 开始生成TTS tokens
 
     // 将预提取的global tokens反馈到模型（不加偏移量，与普通模式一致）
     for &token in &global_tokens {
         inference.batches[0].push(token as u32);
     }
 
-    info!("🔧 [{}] 已将预提取的global tokens反馈到模型", request_id);
+    // 已将预提取的global tokens反馈到模型
 
     // === 切换到 Semantic 阶段（复制普通模式结构）===
     inference.batches[0].push(crate::rwkv_sampler::TTS_TAG_1 as u32);
-    info!(
-        "🔍 [{}] 切换到Semantic阶段，推入TTS_TAG_1={}",
-        request_id,
-        crate::rwkv_sampler::TTS_TAG_1
-    );
+    // 切换到Semantic阶段，推入TTS_TAG_1
 
     // 让标签生效，直到产生输出，并保留logits供首步使用
     let last_sem_logits: Vec<f32> = loop {
@@ -132,14 +120,8 @@ pub async fn execute_zero_shot_inference(
     args_semantic.top_p = 0.95;
     args_semantic.top_k = 80;
 
-    info!(
-        "🔍 [{}] 开始生成semantic tokens，最大限制: {}",
-        request_id, semantic_limit
-    );
-    info!(
-        "🔍 [{}] Semantic阶段采样参数: temperature={:.2}, top_p={:.2}, top_k={} (固定参数，与Python一致)",
-        request_id, args_semantic.temperature, args_semantic.top_p, args_semantic.top_k
-    );
+    // 开始生成semantic tokens
+    // Semantic阶段采样参数: temperature=1.0, top_p=0.95, top_k=80 (固定参数，与Python一致)
 
     // 创建独立的RNG用于semantic阶段
     // 声音克隆场景也支持随机采样，根据seed参数决定采样方式
@@ -160,12 +142,10 @@ pub async fn execute_zero_shot_inference(
     } else {
         // 即使rng为None，也创建新的RNG用于随机采样（除非用户明确指定seed）
         if let Some(seed) = request.args.seed {
-
             Some(StdRng::seed_from_u64(seed.wrapping_add(
                 request.args.layered_randomness.semantic_seed_offset,
             )))
         } else {
-
             Some(StdRng::from_entropy())
         }
     };
@@ -203,7 +183,6 @@ pub async fn execute_zero_shot_inference(
             }
         }
 
-
         // 直接使用屏蔽后的logits进行采样
         let next_id = crate::rwkv_sampler::sample_logits(
             &logits_masked,
@@ -211,7 +190,6 @@ pub async fn execute_zero_shot_inference(
             None,
             &mut semantic_rng,
         );
-
 
         // 检查是否遇到EOS token（必须在范围检查之前）
         if next_id == crate::rwkv_sampler::TTS_EOS_TOKEN as usize {
@@ -232,6 +210,6 @@ pub async fn execute_zero_shot_inference(
         // 反馈到模型：语义阶段直接使用原始token（不加偏移）
         inference.batches[0].push(next_id as u32);
     }
-    // 返回预提取的global tokens和新生成的semantic tokens（已排除预读取的semantic tokens）
+    // TTS tokens生成完成
     Ok((global_tokens, semantic_tokens))
 }
