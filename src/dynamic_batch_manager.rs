@@ -447,6 +447,7 @@ impl DynamicBatchManager {
                 voice_fidelity: request.args.voice_fidelity,
                 layered_randomness: request.args.layered_randomness.clone(),
                 sampling: None,
+                token_chunk_size: request.args.token_chunk_size,
             };
 
             let infer_context = shared_runtime_clone

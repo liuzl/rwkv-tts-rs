@@ -9,7 +9,7 @@ const SPEED_MAP: &[(&str, i32)] = &[
     ("very_slow", 1),
     ("slow", 2),
     ("medium", 3),
-    ("fast", 4), 
+    ("fast", 4),
     ("very_fast", 5),
 ];
 

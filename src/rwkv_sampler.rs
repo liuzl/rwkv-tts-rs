@@ -159,6 +159,8 @@ pub struct SamplerArgs {
     pub voice_fidelity: f32,
     // 分层随机性控制
     pub layered_randomness: LayeredRandomnessConfig,
+    // Token chunk size配置
+    pub token_chunk_size: usize,
 }
 
 /// 分层随机性配置
@@ -198,6 +200,7 @@ impl Default for SamplerArgs {
             seed: None,
             voice_fidelity: 0.8, // 默认高音色保真度
             layered_randomness: LayeredRandomnessConfig::default(),
+            token_chunk_size: 512, // 默认token chunk size
         }
     }
 }
@@ -219,6 +222,8 @@ pub struct RwkvSampler {
     // 带种子的RNG（可选，启用则实现确定性采样）
     rng: Option<StdRng>,
     batch_counter: AtomicUsize,
+    // Token chunk size配置
+    token_chunk_size: usize,
 }
 impl RwkvSampler {
     /// 创建默认量化配置
@@ -240,6 +245,7 @@ impl RwkvSampler {
         model_path: &str,
         vocab_path: &str,
         quant_config: Option<HashMap<usize, Quant>>,
+        token_chunk_size: usize,
     ) -> Result<Self> {
         // 检查模型目录/文件是否存在
         let model_path_ref = Path::new(model_path);
@@ -402,6 +408,7 @@ impl RwkvSampler {
             tokenizer,
             rng: None,
             batch_counter: AtomicUsize::new(0),
+            token_chunk_size,
         })
     }
 
@@ -456,7 +463,7 @@ impl RwkvSampler {
     ) -> Result<Self> {
         // 重新创建一个新的采样器实例
         // 虽然这会重新加载模型，但确保了完全独立的状态
-        Self::new(model_path, vocab_path, quant_config).await
+        Self::new(model_path, vocab_path, quant_config, 512).await
     }
 
     /// 为请求生成唯一ID用于调试追踪
@@ -479,9 +486,8 @@ impl RwkvSampler {
             .tokenizer
             .encode(prompt.as_bytes())
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        let token_chunk_size = 64usize;
         let prompt_batch = RnnInputBatch::new(prompt_tokens.clone(), RnnOption::Last);
-        let mut inference = RnnInput::new(vec![prompt_batch], token_chunk_size);
+        let mut inference = RnnInput::new(vec![prompt_batch], self.token_chunk_size);
 
         // 预填充阶段：先把完整 prompt 吃完，直到 runtime 开始产生输出
         loop {
@@ -583,22 +589,23 @@ impl RwkvSampler {
 
         // === Prefill 阶段 ===
         let input_tokens_u32: Vec<u32> = input_tokens.iter().map(|&t| t as u32).collect();
-        let token_chunk_size = 64usize;
 
         println!("🔧 [{}] Prefill阶段 - 创建完全独立的推理上下文", request_id);
 
         // 关键修复：为每个请求创建完全独立的推理上下文
         // 使用固定的batch索引0，但确保每次调用都是独立的推理状态
         // 这避免了不同请求之间的状态污染问题
+        #[cfg(debug_assertions)]
         println!(
             "🔧 [{}] 创建独立推理上下文，输入tokens: {} 个 (状态隔离)",
             request_id,
             input_tokens_u32.len()
         );
         let batch = RnnInputBatch::new(input_tokens_u32.clone(), RnnOption::Last);
-        let mut inference = RnnInput::new(vec![batch], token_chunk_size);
+        let mut inference = RnnInput::new(vec![batch], self.token_chunk_size);
 
         // 重要：确保推理上下文完全独立，不受之前请求影响
+        #[cfg(debug_assertions)]
         println!("🔧 [{}] 推理上下文已隔离，开始Prefill处理", request_id);
         // 消化输入直到产生输出，并保留最后一次logits
         let last_logits: Vec<f32> = loop {
@@ -620,6 +627,7 @@ impl RwkvSampler {
         if has_ref_audio {
             if let Some(ref_global) = _ref_global_tokens {
                 global_tokens = ref_global.to_vec();
+                #[cfg(debug_assertions)]
                 println!(
                     "🎯 [{}] 使用预提取的global tokens: {} 个",
                     request_id,
@@ -628,6 +636,7 @@ impl RwkvSampler {
             }
             if let Some(ref_semantic) = _ref_semantic_tokens {
                 semantic_tokens = ref_semantic.to_vec();
+                #[cfg(debug_assertions)]
                 println!(
                     "🎯 [{}] 使用预提取的semantic tokens: {} 个",
                     request_id,
@@ -635,6 +644,7 @@ impl RwkvSampler {
                 );
             }
 
+            #[cfg(debug_assertions)]
             println!(
                 "✅ [{}] 声音克隆模式：直接使用预提取特征，跳过生成阶段",
                 request_id
@@ -722,6 +732,7 @@ impl RwkvSampler {
 
         // Python实现固定生成32个global tokens，并且仅在前4096维内采样
         let global_tokens_size: usize = 32;
+        #[cfg(debug_assertions)]
         println!(
             "🔍 [{}] 调试信息 - 开始生成 {} 个global tokens",
             request_id, global_tokens_size
@@ -747,6 +758,7 @@ impl RwkvSampler {
             } else {
                 4096
             };
+            #[cfg(debug_assertions)]
             if i == 0 {
                 println!(
                     "🔍 [{}] 调试信息 - logits长度: {}, global词汇表大小: {}",
@@ -767,6 +779,7 @@ impl RwkvSampler {
             global_tokens.push(next_id as i32);
             // 反馈到模型：直接使用原始ID（与C++代码一致）
             inference.batches[0].push(next_id as u32);
+            #[cfg(debug_assertions)]
             if i < 5 {
                 println!(
                     "🔍 [{}] 调试信息 - global token {}: {}",
@@ -788,6 +801,7 @@ impl RwkvSampler {
 
         // 语义阶段：限制最大生成步数为2048
         let semantic_limit: usize = usize::min(args.max_tokens, 2048);
+        #[cfg(debug_assertions)]
         println!(
             "🔍 [{}] 调试信息 - 开始生成semantic tokens，最大限制: {}",
             request_id, semantic_limit
@@ -826,6 +840,7 @@ impl RwkvSampler {
             semantic_tokens.push(next_id as i32);
             // 语义阶段反馈：直接反馈原始id（经验）
             inference.batches[0].push(next_id as u32);
+            #[cfg(debug_assertions)]
             if i < 5 {
                 println!(
                     "🔍 [{}] 调试信息 - semantic token {}: {}",
@@ -834,17 +849,20 @@ impl RwkvSampler {
             }
         }
 
-        println!(
-            "✅ [{}] 生成完成: global tokens: {} 个, semantic tokens: {} 个",
-            request_id,
-            global_tokens.len(),
-            semantic_tokens.len()
-        );
-        if global_tokens.is_empty() {
-            println!("⚠️ [{}] 警告: 未生成任何global tokens!", request_id);
-        }
-        if semantic_tokens.is_empty() {
-            println!("⚠️ [{}] 警告: 未生成任何semantic tokens!", request_id);
+        #[cfg(debug_assertions)]
+        {
+            println!(
+                "✅ [{}] 生成完成: global tokens: {} 个, semantic tokens: {} 个",
+                request_id,
+                global_tokens.len(),
+                semantic_tokens.len()
+            );
+            if global_tokens.is_empty() {
+                println!("⚠️ [{}] 警告: 未生成任何global tokens!", request_id);
+            }
+            if semantic_tokens.is_empty() {
+                println!("⚠️ [{}] 警告: 未生成任何semantic tokens!", request_id);
+            }
         }
         Ok((global_tokens, semantic_tokens))
     }
@@ -860,6 +878,7 @@ impl RwkvSampler {
         }
 
         let batch_size = requests.len();
+        #[cfg(debug_assertions)]
         println!(
             "🚀 开始批处理生成，请求数量: {} (完全独立状态模式)",
             batch_size
@@ -867,11 +886,13 @@ impl RwkvSampler {
 
         // 批处理开始前进行全局状态重置
         self.reset();
+        #[cfg(debug_assertions)]
         println!("🔄 批处理前已重置全局状态");
 
         // 完全独立的串行处理：每个请求都有独立状态，确保无污染
         let mut results = Vec::with_capacity(batch_size);
         for (idx, request) in requests.into_iter().enumerate() {
+            #[cfg(debug_assertions)]
             println!("📝 处理独立请求 {}/{} (状态隔离)", idx + 1, batch_size);
 
             // 关键修复：每个请求前进行彻底的状态重置
@@ -880,9 +901,11 @@ impl RwkvSampler {
             // 统一处理种子设置，不区分声音克隆场景
             if let Some(seed) = request.args.seed {
                 self.set_seed(Some(seed));
+                #[cfg(debug_assertions)]
                 println!("🎲 请求 {} 设置确定性种子: {}", idx + 1, seed);
             } else {
                 self.set_seed(None); // 重置为非确定性模式
+                #[cfg(debug_assertions)]
                 println!("🎲 请求 {} 使用非确定性采样", idx + 1);
             }
 

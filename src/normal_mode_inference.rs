@@ -46,7 +46,7 @@ pub async fn execute_normal_inference(
 
     // === Prefill 阶段 ===
     let input_tokens_u32: Vec<u32> = input_tokens.iter().map(|&t| t as u32).collect();
-    let token_chunk_size = 64usize;
+    let token_chunk_size = request.args.token_chunk_size;
 
     info!("🔧 [{}] Prefill阶段 - 初始化独立状态", request_id);
 
@@ -56,8 +56,9 @@ pub async fn execute_normal_inference(
 
     // 为批处理槽位0加载初始状态，确保状态隔离
     {
-        let initial_state = state.lock().await.init();
-        state.lock().await.load(initial_state, 0)?;
+        let state_guard = state.lock().await;
+        let initial_state = state_guard.init();
+        state_guard.load(initial_state, 0)?;
         info!("🔧 [{}] 已为批处理槽位0加载初始状态", request_id);
     }
 

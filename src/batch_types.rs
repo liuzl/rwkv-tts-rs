@@ -13,6 +13,26 @@ use tokio::sync::oneshot;
 
 use crate::rwkv_sampler::{SamplerArgs, TtsBatchRequest};
 
+/// 采样参数结构体，用于传递给sample_logits函数
+#[derive(Debug, Clone)]
+pub struct SamplingArgs {
+    pub logits: Vec<f32>, // 保持Vec<f32>以兼容现有代码
+    pub temperature: f32,
+    pub top_k: usize,
+    pub top_p: f32,
+    pub sampler_args: SamplerArgs,
+}
+
+/// 采样参数结构体（引用版本），避免logits的clone操作
+#[derive(Debug)]
+pub struct SamplingArgsRef<'a> {
+    pub logits: &'a [f32], // 使用引用避免clone
+    pub temperature: f32,
+    pub top_k: usize,
+    pub top_p: f32,
+    pub sampler_args: SamplerArgs,
+}
+
 /// TTS请求项，包含完整的请求信息和响应通道
 #[derive(Debug)]
 pub struct DynamicTtsRequest {
@@ -57,6 +77,8 @@ pub struct DynamicBatchConfig {
     pub max_concurrent_batches: usize,
     /// 信号量许可数量（基于硬件和负载调整）
     pub semaphore_permits: usize,
+    /// Prefill阶段每次送入的token块大小（提高吞吐，默认256）
+    pub token_chunk_size: usize,
 }
 
 impl Default for DynamicBatchConfig {
@@ -68,6 +90,7 @@ impl Default for DynamicBatchConfig {
             inference_timeout_ms: 60000,
             max_concurrent_batches: 4, // 合理的默认并发数
             semaphore_permits: 3,      // 信号量许可数量略小于并发数
+            token_chunk_size: 256,
         }
     }
 }
@@ -93,6 +116,8 @@ pub struct TtsInferOptions {
     pub layered_randomness: crate::rwkv_sampler::LayeredRandomnessConfig,
     /// 采样配置（可选）
     pub sampling: Option<std::collections::HashMap<String, serde_json::Value>>,
+    /// Prefill阶段每次送入的token块大小（默认256）
+    pub token_chunk_size: usize,
 }
 
 impl Default for TtsInferOptions {
@@ -105,6 +130,7 @@ impl Default for TtsInferOptions {
             voice_fidelity: 0.8,
             layered_randomness: crate::rwkv_sampler::LayeredRandomnessConfig::default(),
             sampling: None,
+            token_chunk_size: 256,
         }
     }
 }

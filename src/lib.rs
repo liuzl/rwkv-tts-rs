@@ -93,7 +93,8 @@ pub mod tts_generator {
         pub async fn new_async(model_path: String, vocab_path: String) -> Result<Self> {
             // 创建RWKV采样器，不使用量化配置
             let quant_config = None;
-            let rwkv_sampler = RwkvSampler::new(&model_path, &vocab_path, quant_config).await?;
+            let rwkv_sampler =
+                RwkvSampler::new(&model_path, &vocab_path, quant_config, 256).await?;
 
             Ok(Self {
                 rwkv_sampler: Some(rwkv_sampler),

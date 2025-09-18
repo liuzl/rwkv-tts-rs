@@ -81,6 +81,7 @@ impl LightweightTtsPipeline {
     /// 返回格式为"prompt_text + user_text"的组合，以改善语音合成效果
     pub fn process_text_zero_shot(&self, text: &str, prompt_text: &str) -> String {
         let combined_text = format!("{}{}", prompt_text, text);
+        #[cfg(debug_assertions)]
         println!("Zero-shot模式：使用组合文本: {}", combined_text);
         combined_text
     }
@@ -571,9 +572,12 @@ impl LightweightTtsPipeline {
     pub async fn generate_speech(&self, args: &LightweightTtsPipelineArgs) -> Result<Vec<f32>> {
         let total_start = std::time::Instant::now();
 
-        println!("🚀 开始轻量级TTS生成流程");
-        println!("  文本: {}", args.text);
-        println!("  Zero-shot模式: {}", args.zero_shot);
+        #[cfg(debug_assertions)]
+        {
+            println!("🚀 开始轻量级TTS生成流程");
+            println!("  文本: {}", args.text);
+            println!("  Zero-shot模式: {}", args.zero_shot);
+        }
 
         // 1. 处理文本
         let text_start = std::time::Instant::now();
@@ -582,7 +586,8 @@ impl LightweightTtsPipeline {
         } else {
             self.process_text(&args.text)
         };
-        let text_time = text_start.elapsed();
+        let _text_time = text_start.elapsed();
+        #[cfg(debug_assertions)]
         println!(
             "  ⏱️  文本处理耗时: {:.2}ms",
             text_time.as_secs_f64() * 1000.0
@@ -593,12 +598,14 @@ impl LightweightTtsPipeline {
         let (property_tokens, ref_global_tokens, ref_semantic_tokens) =
             // 优先使用直接传入的音色特征tokens
             if let (Some(global_tokens), Some(semantic_tokens)) = (&args.voice_global_tokens, &args.voice_semantic_tokens) {
+                #[cfg(debug_assertions)]
                 println!("  使用直接传入的音色特征tokens");
                 (vec![], Some(global_tokens.clone()), Some(semantic_tokens.clone()))
             } else if args.zero_shot {
                 // 在zero-shot模式下，优化为一次性获取所有需要的信息
                 // 直接使用传入的音色特征tokens（如果提供了的话）
                 if let (Some(global_tokens), Some(semantic_tokens)) = (&args.voice_global_tokens, &args.voice_semantic_tokens) {
+                    #[cfg(debug_assertions)]
                     println!("  使用传入的音色特征tokens");
                     (vec![], Some(global_tokens.clone()), Some(semantic_tokens.clone()))
                 } else {
@@ -610,22 +617,25 @@ impl LightweightTtsPipeline {
                 let tokens = self.generate_property_tokens(args);
                 (tokens, None, None)
             };
-        let ref_time = ref_start.elapsed();
-        if args.voice_global_tokens.is_some() && args.voice_semantic_tokens.is_some() {
-            println!(
-                "  ⏱️  音色特征tokens处理耗时: {:.2}ms",
-                ref_time.as_secs_f64() * 1000.0
-            );
-        } else if args.zero_shot {
-            println!(
-                "  ⏱️  参考音频处理耗时: {:.2}ms",
-                ref_time.as_secs_f64() * 1000.0
-            );
-        } else {
-            println!(
-                "  ⏱️  属性tokens生成耗时: {:.2}ms",
-                ref_time.as_secs_f64() * 1000.0
-            );
+        let _ref_time = ref_start.elapsed();
+        #[cfg(debug_assertions)]
+        {
+            if args.voice_global_tokens.is_some() && args.voice_semantic_tokens.is_some() {
+                println!(
+                    "  ⏱️  音色特征tokens处理耗时: {:.2}ms",
+                    ref_time.as_secs_f64() * 1000.0
+                );
+            } else if args.zero_shot {
+                println!(
+                    "  ⏱️  参考音频处理耗时: {:.2}ms",
+                    ref_time.as_secs_f64() * 1000.0
+                );
+            } else {
+                println!(
+                    "  ⏱️  属性tokens生成耗时: {:.2}ms",
+                    ref_time.as_secs_f64() * 1000.0
+                );
+            }
         }
 
         // 3. 创建采样参数
@@ -637,6 +647,7 @@ impl LightweightTtsPipeline {
             seed: args.seed,
             voice_fidelity: 0.8, // 默认音色保真度
             layered_randomness: crate::rwkv_sampler::LayeredRandomnessConfig::default(),
+            token_chunk_size: 512, // 使用默认值
         };
 
         // 4. 创建批处理请求
@@ -660,12 +671,14 @@ impl LightweightTtsPipeline {
                 request.args,
             )
             .await?;
-        let inference_time = inference_start.elapsed();
+        let _inference_time = inference_start.elapsed();
+        #[cfg(debug_assertions)]
         println!(
             "  ⏱️  RWKV模型推理耗时: {:.2}ms",
-            inference_time.as_secs_f64() * 1000.0
+            _inference_time.as_secs_f64() * 1000.0
         );
 
+        #[cfg(debug_assertions)]
         println!(
             "  生成global tokens: {} 个, semantic tokens: {} 个",
             global_tokens.len(),
@@ -674,52 +687,57 @@ impl LightweightTtsPipeline {
 
         // 6. 解码音频
         if global_tokens.is_empty() && semantic_tokens.is_empty() {
+            #[cfg(debug_assertions)]
             println!("  未生成任何TTS tokens，返回静音占位");
             return Ok(vec![0.0; 16000]);
         }
 
         let decode_start = std::time::Instant::now();
         let audio = self.decode_audio(&global_tokens, &semantic_tokens).await?;
-        let decode_time = decode_start.elapsed();
+        let _decode_time = decode_start.elapsed();
+        #[cfg(debug_assertions)]
         println!(
             "  ⏱️  音频解码耗时: {:.2}ms",
-            decode_time.as_secs_f64() * 1000.0
+            _decode_time.as_secs_f64() * 1000.0
         );
 
         let total_time = total_start.elapsed();
         let audio_duration = audio.len() as f64 / 16000.0; // 假设16kHz采样率
-        let rtf = total_time.as_secs_f64() / audio_duration;
+        let _rtf = total_time.as_secs_f64() / audio_duration;
 
+        #[cfg(debug_assertions)]
         println!(
             "  ⏱️  总耗时: {:.2}ms, 音频时长: {:.2}s, RTF: {:.3}",
             total_time.as_secs_f64() * 1000.0,
             audio_duration,
-            rtf
+            _rtf
         );
 
         // 性能优化建议
-        if rtf > 0.3 {
+        #[cfg(debug_assertions)]
+        if _rtf > 0.3 {
             println!("  ⚠️  性能提示: RTF > 0.3，建议优化:");
-            if inference_time.as_secs_f64() > total_time.as_secs_f64() * 0.6 {
+            if _inference_time.as_secs_f64() > total_time.as_secs_f64() * 0.6 {
                 println!(
                     "     - RWKV推理占用{:.1}%时间，考虑使用更激进的量化或更小的模型",
-                    inference_time.as_secs_f64() / total_time.as_secs_f64() * 100.0
+                    _inference_time.as_secs_f64() / total_time.as_secs_f64() * 100.0
                 );
             }
-            if decode_time.as_secs_f64() > total_time.as_secs_f64() * 0.3 {
+            if _decode_time.as_secs_f64() > total_time.as_secs_f64() * 0.3 {
                 println!(
                     "     - 音频解码占用{:.1}%时间，考虑优化BiCodec模型或使用GPU加速",
-                    decode_time.as_secs_f64() / total_time.as_secs_f64() * 100.0
+                    _decode_time.as_secs_f64() / total_time.as_secs_f64() * 100.0
                 );
             }
-            if args.zero_shot && ref_time.as_secs_f64() > total_time.as_secs_f64() * 0.2 {
+            if args.zero_shot && _ref_time.as_secs_f64() > total_time.as_secs_f64() * 0.2 {
                 println!(
                     "     - 参考音频处理占用{:.1}%时间，考虑缓存或预处理参考音频",
-                    ref_time.as_secs_f64() / total_time.as_secs_f64() * 100.0
+                    _ref_time.as_secs_f64() / total_time.as_secs_f64() * 100.0
                 );
             }
         }
 
+        #[cfg(debug_assertions)]
         println!("  轻量级TTS生成完成，音频长度: {} 样本", audio.len());
         Ok(audio)
     }
@@ -733,6 +751,7 @@ impl LightweightTtsPipeline {
     ) -> Result<()> {
         use std::path::Path;
 
+        #[cfg(debug_assertions)]
         println!("  保存音频到: {}", output_path);
 
         let path = Path::new(output_path);
@@ -769,6 +788,7 @@ impl LightweightTtsPipeline {
         }
         writer.finalize()?;
 
+        #[cfg(debug_assertions)]
         println!("  WAV音频保存完成");
         Ok(())
     }
@@ -858,6 +878,7 @@ impl LightweightTtsPipeline {
                 .map_err(|e| anyhow::anyhow!("写入MP3刷新数据失败: {}", e))?;
         }
 
+        #[cfg(debug_assertions)]
         println!("  MP3音频保存完成");
         Ok(())
     }

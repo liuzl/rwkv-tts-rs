@@ -56,3 +56,22 @@ path = "bin/server.rs"
 
 [dev-dependencies]
 tempfile = "3.22.0"
+
+# Release profile optimizations for maximum performance
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.release.build-override]
+opt-level = 3
+codegen-units = 1
+
+# Optimize key dependencies for better performance
+[profile.release.package.web-rwkv]
+opt-level = 3
+
+[profile.release.package.ort]
+opt-level = 3

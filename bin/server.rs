@@ -1252,6 +1252,13 @@ async fn main() -> Result<()> {
                 .help("服务器监听端口")
                 .default_value("3000"),
         )
+        .arg(
+            Arg::new("token-chunk-size")
+                .long("token-chunk-size")
+                .value_name("SIZE")
+                .help("Prefill阶段每次送入的token块大小")
+                .default_value("256"),
+        )
         .get_matches();
 
     // 初始化日志，过滤掉ort和web-rwkv的调试输出
@@ -1373,6 +1380,13 @@ async fn main() -> Result<()> {
         .parse()
         .expect("无效的推理超时时间");
 
+    // 获取token chunk size配置
+    let token_chunk_size: usize = matches
+        .get_one::<String>("token-chunk-size")
+        .unwrap()
+        .parse()
+        .expect("无效的token chunk size");
+
     // 自动计算最大并发批次数
     let max_concurrent_batches: usize = if batch_size <= 10 {
         10
@@ -1388,6 +1402,7 @@ async fn main() -> Result<()> {
         inference_timeout_ms: inference_timeout, // 可配置的推理超时时间
         max_concurrent_batches,                  // 可配置的并发批次数
         semaphore_permits: (max_concurrent_batches * 3 / 4).clamp(1, 8), // 信号量许可数量略小于并发数
+        token_chunk_size,                                                // 可配置的token chunk size
     };
     info!(
         "动态批处理配置: 最大大小={}, 收集超时={}ms, 推理超时={}ms, 最大并发批次={}（自动计算）",

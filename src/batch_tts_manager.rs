@@ -41,7 +41,7 @@ impl BatchTtsManager {
         
         // 创建全局RWKV采样器，不使用量化配置
         let quant_config = None;
-        let sampler = RwkvSampler::new(model_path, vocab_path, quant_config).await?;
+        let sampler = RwkvSampler::new(model_path, vocab_path, quant_config, 256).await?;
         info!("全局RWKV采样器创建成功，batch_size: {}", batch_size);
         
         // 初始化参考音频工具

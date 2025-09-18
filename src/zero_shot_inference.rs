@@ -19,7 +19,7 @@ pub async fn execute_zero_shot_inference(
     // 获取runtime
     let runtime = &infer_context.runtime;
     let state = &infer_context.state;
-    let token_chunk_size = 64usize;
+    let token_chunk_size = request.args.token_chunk_size;
 
     // === 验证和读取预提取的音色特征 ===
     let ref_global = request

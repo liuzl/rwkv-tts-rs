@@ -87,12 +87,13 @@ impl RefAudioUtilities {
 
         // 可选的detokenizer会话
         let bicodec_detokenizer_session = if let Some(detokenizer_path) = detokenizer_path {
-            match create_session_builder()?.commit_from_file(detokenizer_path) {
-                Ok(session) => Some(session),
-                Err(e) => {
-                    println!("Warning: Failed to load BiCodecDetokenize model: {}", e);
-                    None
+            {
+                let result = create_session_builder()?.commit_from_file(detokenizer_path);
+                if let Err(_e) = &result {
+                    #[cfg(debug_assertions)]
+                    println!("Warning: Failed to load BiCodecDetokenize model: {}", _e);
                 }
+                result.ok()
             }
         } else {
             None
@@ -115,6 +116,7 @@ impl RefAudioUtilities {
         target_sr: u32,
         volume_normalize: bool,
     ) -> Result<Array1<f32>> {
+        #[cfg(debug_assertions)]
         println!("[DEBUG] Loading audio file: {}", audio_path);
 
         if !Path::new(audio_path).exists() {
@@ -164,6 +166,7 @@ impl RefAudioUtilities {
 
         // 多声道转单声道 - 与C++实现一致（取第一个通道）
         if channels > 1 {
+            #[cfg(debug_assertions)]
             println!("[DEBUG] Converting {} channels to mono", channels);
             let len = audio.len() / channels as usize;
             let mut mono_audio = Vec::with_capacity(len);
@@ -181,6 +184,7 @@ impl RefAudioUtilities {
         // 检查音频数据的数值范围
         let max_val = audio.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b.abs()));
         if max_val > 10.0 {
+            #[cfg(debug_assertions)]
             println!(
                 "[WARNING] 音频数据可能未正确归一化，最大绝对值: {:.6}",
                 max_val
@@ -189,6 +193,7 @@ impl RefAudioUtilities {
 
         // 重采样到目标采样率 - 与C++的wav->resample(16000)保持一致
         if sample_rate != target_sr {
+            #[cfg(debug_assertions)]
             println!(
                 "[DEBUG] Resampling from {} Hz to {} Hz",
                 sample_rate, target_sr
@@ -203,10 +208,12 @@ impl RefAudioUtilities {
 
         // 音量归一化
         if volume_normalize {
+            #[cfg(debug_assertions)]
             println!("[DEBUG] Applying volume normalization");
             audio = self.audio_volume_normalize(audio, 0.2);
         }
 
+        #[cfg(debug_assertions)]
         println!("[DEBUG] Final audio length: {} samples", audio.len());
         Ok(audio)
     }
@@ -222,6 +229,7 @@ impl RefAudioUtilities {
         })?;
         let spec = reader.spec();
 
+        #[cfg(debug_assertions)]
         println!(
             "[DEBUG] WAV spec: channels={}, sample_rate={}, bits_per_sample={}",
             spec.channels, spec.sample_rate, spec.bits_per_sample
@@ -312,6 +320,7 @@ impl RefAudioUtilities {
         let sample_rate = codec_params.sample_rate.unwrap_or(44100);
         let channels = codec_params.channels.map(|ch| ch.count()).unwrap_or(2) as u16;
 
+        #[cfg(debug_assertions)]
         println!(
             "[DEBUG] MP3 spec: channels={}, sample_rate={}",
             channels, sample_rate
@@ -510,8 +519,9 @@ impl RefAudioUtilities {
                     // 忽略解码错误，继续处理
                     continue;
                 }
-                Err(e) => {
-                    println!("[WARNING] MP3解码错误: {}", e);
+                Err(_e) => {
+                    #[cfg(debug_assertions)]
+                    println!("[WARNING] MP3解码错误: {}", _e);
                     continue;
                 }
             }
@@ -661,6 +671,7 @@ impl RefAudioUtilities {
             audio = audio.mapv(|x| x / max_value);
         }
 
+        #[cfg(debug_assertions)]
         println!("[DEBUG] Volume normalization: original_max={:.4}, volume={:.4}, scale_factor={:.4}, final_max={:.4}", 
                 temp[temp.len() - 1], volume, scale_factor,
                 audio.iter().fold(0.0f32, |acc, &x| acc.max(x.abs())));
@@ -702,6 +713,7 @@ impl RefAudioUtilities {
             *value = (*value - mean) / std;
         }
 
+        #[cfg(debug_assertions)]
         println!(
             "[DEBUG] Zero-mean unit-variance normalize: mean={:.6}, std={:.6}, size={}",
             mean,
@@ -732,6 +744,7 @@ impl RefAudioUtilities {
         }
 
         let wav_len = padded_wav.len();
+        #[cfg(debug_assertions)]
         println!(
             "[DEBUG] After center padding: original_len={}, padded_len={}, pad_width={}",
             wav.len(),
@@ -746,6 +759,7 @@ impl RefAudioUtilities {
             (wav_len - n_fft) / hop_length + 1
         };
 
+        #[cfg(debug_assertions)]
         println!(
             "[DEBUG] Mel spectrogram extraction: wav_len={}, n_fft={}, hop_length={}, n_frames={}",
             wav_len, n_fft, hop_length, n_frames
@@ -809,6 +823,7 @@ impl RefAudioUtilities {
             }
         }
 
+        #[cfg(debug_assertions)]
         println!(
             "[DEBUG] Mel spectrogram shape: [{}, {}]",
             mel_spectrogram.nrows(),
@@ -1187,32 +1202,36 @@ impl RefAudioUtilities {
         let feat_shape: Vec<i64> = feat_dyn.shape().iter().map(|&d| d as i64).collect();
         let feat_vec = feat_dyn.into_raw_vec();
 
-        // 验证feat数据布局：打印前几行的前几个元素
-        println!("[DEBUG] feat tensor data layout verification:");
-        for row in 0..3.min(feat_shape[1] as usize) {
-            let start_idx = row * feat_shape[2] as usize;
-            let end_idx = (start_idx + 5).min(feat_vec.len());
-            println!("[DEBUG] Row {}: {:?}", row, &feat_vec[start_idx..end_idx]);
+        #[cfg(debug_assertions)]
+        {
+            // 验证feat数据布局：打印前几行的前几个元素
+            println!("[DEBUG] feat tensor data layout verification:");
+            for row in 0..3.min(feat_shape[1] as usize) {
+                let start_idx = row * feat_shape[2] as usize;
+                let end_idx = (start_idx + 5).min(feat_vec.len());
+                println!("[DEBUG] Row {}: {:?}", row, &feat_vec[start_idx..end_idx]);
+            }
+
+            // 验证张量形状与C++一致
+            println!("[DEBUG] Tensor shapes verification:");
+            println!(
+                "[DEBUG] - ref_mel: {:?} (expected: [1, 128, 301])",
+                ref_mel_shape
+            );
+            println!("[DEBUG] - feat: {:?} (expected: [1, t, 1024])", feat_shape);
+
+            // 验证feat张量的数据统计（在创建张量之前）
+            println!(
+                "[DEBUG] Feat tensor data stats - min: {:.6}, max: {:.6}, mean: {:.6}",
+                feat_vec.iter().fold(f32::INFINITY, |a, &b| a.min(b)),
+                feat_vec.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)),
+                feat_vec.iter().sum::<f32>() / feat_vec.len() as f32
+            );
         }
-
-        // 验证张量形状与C++一致
-        println!("[DEBUG] Tensor shapes verification:");
-        println!(
-            "[DEBUG] - ref_mel: {:?} (expected: [1, 128, 301])",
-            ref_mel_shape
-        );
-        println!("[DEBUG] - feat: {:?} (expected: [1, t, 1024])", feat_shape);
-
-        // 验证feat张量的数据统计（在创建张量之前）
-        println!(
-            "[DEBUG] Feat tensor data stats - min: {:.6}, max: {:.6}, mean: {:.6}",
-            feat_vec.iter().fold(f32::INFINITY, |a, &b| a.min(b)),
-            feat_vec.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)),
-            feat_vec.iter().sum::<f32>() / feat_vec.len() as f32
-        );
 
         let feat_tensor = Value::from_array((feat_shape.clone(), feat_vec))?;
 
+        #[cfg(debug_assertions)]
         println!(
             "[DEBUG] Input tensors prepared - ref_mel shape: {:?}, feat shape: {:?}",
             ref_mel_shape, feat_shape
@@ -1228,17 +1247,20 @@ impl RefAudioUtilities {
             "feat" => SessionInputValue::from(feat_tensor)
         ])?;
 
-        println!("[DEBUG] Model inference completed, processing outputs...");
-        println!("[DEBUG] Number of outputs: {}", outputs.len());
+        #[cfg(debug_assertions)]
+        {
+            println!("[DEBUG] Model inference completed, processing outputs...");
+            println!("[DEBUG] Number of outputs: {}", outputs.len());
 
-        // 检查输出张量的形状和类型
-        for (i, (_name, output)) in outputs.iter().enumerate() {
-            println!(
-                "[DEBUG] Output {}: shape = {:?}, data_type = {:?}",
-                i,
-                output.shape(),
-                output.data_type()
-            );
+            // 检查输出张量的形状和类型
+            for (i, (_name, output)) in outputs.iter().enumerate() {
+                println!(
+                    "[DEBUG] Output {}: shape = {:?}, data_type = {:?}",
+                    i,
+                    output.shape(),
+                    output.data_type()
+                );
+            }
         }
 
         // 修复输出解析顺序：与Python和C++实现保持一致
@@ -1252,6 +1274,7 @@ impl RefAudioUtilities {
 
         // 检查输出名称来确定正确的解析顺序
         for (i, (name, output)) in outputs.iter().enumerate() {
+            #[cfg(debug_assertions)]
             println!(
                 "[DEBUG] Processing output {}: name = {:?}, shape = {:?}",
                 i,
@@ -1269,6 +1292,7 @@ impl RefAudioUtilities {
                         semantic_tokens_slice.to_vec()
                     }
                 };
+                #[cfg(debug_assertions)]
                 println!(
                     "[DEBUG] Extracted semantic_tokens: length = {}",
                     semantic_tokens.len()
@@ -1283,6 +1307,7 @@ impl RefAudioUtilities {
                         global_tokens_slice.to_vec()
                     }
                 };
+                #[cfg(debug_assertions)]
                 println!(
                     "[DEBUG] Extracted global_tokens: length = {}",
                     global_tokens.len()
@@ -1292,6 +1317,7 @@ impl RefAudioUtilities {
 
         // 如果按名称没有找到，使用索引方式作为备选
         if semantic_tokens.is_empty() && global_tokens.is_empty() && outputs.len() >= 2 {
+            #[cfg(debug_assertions)]
             println!("[DEBUG] Falling back to index-based parsing");
             semantic_tokens = match outputs[0].try_extract_tensor::<i64>() {
                 Ok((_s_sem, semantic_tokens_slice)) => {
@@ -1314,49 +1340,56 @@ impl RefAudioUtilities {
             };
         }
 
-        // 统计global_tokens的唯一值
-        let unique_values: std::collections::HashSet<i32> = global_tokens.iter().cloned().collect();
-        println!(
-            "[DEBUG] Global tokens unique values count: {}, values: {:?}",
-            unique_values.len(),
-            unique_values.iter().take(10).collect::<Vec<_>>()
-        );
-        println!(
-            "[DEBUG] Global tokens raw data (first 10): {:?}",
-            &global_tokens[..global_tokens.len().min(10)]
-        );
-
-        println!(
-            "[DEBUG] Tokenization completed - global tokens: {:?}, semantic tokens length: {}",
-            global_tokens,
-            semantic_tokens.len()
-        );
-        if !semantic_tokens.is_empty() {
+        #[cfg(debug_assertions)]
+        {
+            // 统计global_tokens的唯一值
+            let unique_values: std::collections::HashSet<i32> =
+                global_tokens.iter().cloned().collect();
             println!(
-                "[DEBUG] Semantic tokens sample (first 10): {:?}",
-                &semantic_tokens[..semantic_tokens.len().min(10)]
+                "[DEBUG] Global tokens unique values count: {}, values: {:?}",
+                unique_values.len(),
+                unique_values.iter().take(10).collect::<Vec<_>>()
+            );
+            println!(
+                "[DEBUG] Global tokens raw data (first 10): {:?}",
+                &global_tokens[..global_tokens.len().min(10)]
             );
         }
 
-        // 添加tokens范围检查
-        let mut out_of_range_global = 0;
-        for &token in &global_tokens {
-            if !(0..4096).contains(&token) {
-                out_of_range_global += 1;
+        #[cfg(debug_assertions)]
+        {
+            println!(
+                "[DEBUG] Tokenization completed - global tokens: {:?}, semantic tokens length: {}",
+                global_tokens,
+                semantic_tokens.len()
+            );
+            if !semantic_tokens.is_empty() {
+                println!(
+                    "[DEBUG] Semantic tokens sample (first 10): {:?}",
+                    &semantic_tokens[..semantic_tokens.len().min(10)]
+                );
             }
-        }
-        let mut out_of_range_semantic = 0;
-        for &token in &semantic_tokens {
-            if !(0..2048).contains(&token) {
-                out_of_range_semantic += 1;
+
+            // 添加tokens范围检查
+            let mut out_of_range_global = 0;
+            for &token in &global_tokens {
+                if !(0..4096).contains(&token) {
+                    out_of_range_global += 1;
+                }
             }
-        }
-        println!(
-            "[DEBUG] Token range check: out_of_range_global={}, out_of_range_semantic={}",
-            out_of_range_global, out_of_range_semantic
-        );
-        if out_of_range_global > 0 || out_of_range_semantic > 0 {
-            println!("[WARNING] Invalid tokens detected in reference audio processing");
+            let mut out_of_range_semantic = 0;
+            for &token in &semantic_tokens {
+                if !(0..2048).contains(&token) {
+                    out_of_range_semantic += 1;
+                }
+            }
+            println!(
+                "[DEBUG] Token range check: out_of_range_global={}, out_of_range_semantic={}",
+                out_of_range_global, out_of_range_semantic
+            );
+            if out_of_range_global > 0 || out_of_range_semantic > 0 {
+                println!("[WARNING] Invalid tokens detected in reference audio processing");
+            }
         }
         Ok((global_tokens, semantic_tokens))
     }

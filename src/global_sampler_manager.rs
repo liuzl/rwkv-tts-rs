@@ -26,7 +26,7 @@ impl GlobalSamplerManager {
 
         // 不使用量化配置创建采样器
         let quant_config = None;
-        let sampler = RwkvSampler::new(model_path, vocab_path, quant_config).await?;
+        let sampler = RwkvSampler::new(model_path, vocab_path, quant_config, 256).await?;
 
         Ok(Self {
             sampler: Arc::new(Mutex::new(sampler)),
@@ -47,7 +47,7 @@ impl GlobalSamplerManager {
         let _sampler_args = SamplerArgs::default();
 
         // 使用指定的量化配置创建采样器
-        let sampler = RwkvSampler::new(model_path, vocab_path, quant_config).await?;
+        let sampler = RwkvSampler::new(model_path, vocab_path, quant_config, 256).await?;
 
         Ok(Self {
             sampler: Arc::new(Mutex::new(sampler)),

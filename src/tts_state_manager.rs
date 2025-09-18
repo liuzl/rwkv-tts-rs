@@ -10,9 +10,8 @@ use crate::rwkv_sampler::RwkvSampler;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// TTS状态ID，用于标识不同的状态实例
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct TtsStateId(pub u64);
+/// 统一使用batch_types中的类型，去重
+pub use crate::batch_types::{TtsInferOptions, TtsStateId};
 
 /// TTS推理上下文，类似ai00-core的GenerateContext
 pub struct TtsInferContext {
@@ -26,30 +25,6 @@ pub struct TtsInferContext {
     pub sampler: RwkvSampler,
     /// 推理选项
     pub options: TtsInferOptions,
-}
-
-/// TTS推理选项
-#[derive(Debug, Clone)]
-pub struct TtsInferOptions {
-    /// 温度参数
-    pub temperature: f32,
-    /// top_k参数
-    pub top_k: usize,
-    /// top_p参数
-    pub top_p: f32,
-    /// 随机种子
-    pub seed: Option<u64>,
-}
-
-impl Default for TtsInferOptions {
-    fn default() -> Self {
-        Self {
-            temperature: 1.0,
-            top_k: 50,
-            top_p: 0.9,
-            seed: None,
-        }
-    }
 }
 
 /// TTS状态管理器，负责管理独立的状态实例
@@ -93,17 +68,15 @@ impl TtsStateManager {
         let state_id = TtsStateId(self.state_id_generator.fetch_add(1, Ordering::SeqCst));
 
         // 创建独立的采样器实例
-        let mut sampler = RwkvSampler::new(
+        let sampler = RwkvSampler::new(
             &self.model_path,
             &self.vocab_path,
             self.quant_config.clone(),
+            options.token_chunk_size,
         )
         .await?;
 
-        // 设置采样器参数
-        if let Some(seed) = options.seed {
-            sampler.set_seed(Some(seed));
-        }
+        // 采样器参数已在构造时设置
 
         // 记录活跃状态
         {
