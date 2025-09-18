@@ -40,6 +40,7 @@ pub struct DynamicTtsRequest {
     pub property_tokens: Vec<i32>,
     pub ref_global_tokens: Option<Vec<i32>>,
     pub ref_semantic_tokens: Option<Vec<i32>>,
+    pub voice_id: Option<String>, // 音色ID，用于从缓存获取tokens
     pub args: SamplerArgs,
     pub response_tx: oneshot::Sender<Result<(Vec<i32>, Vec<i32>)>>,
     pub submitted_at: Instant,

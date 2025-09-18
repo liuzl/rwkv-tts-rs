@@ -93,6 +93,7 @@ impl DynamicBatchManager {
         property_tokens: Vec<i32>,
         ref_global_tokens: Option<Vec<i32>>,
         ref_semantic_tokens: Option<Vec<i32>>,
+        voice_id: Option<String>,
         args: crate::rwkv_sampler::SamplerArgs,
     ) -> Result<(Vec<i32>, Vec<i32>)> {
         let (response_tx, response_rx) = oneshot::channel();
@@ -102,6 +103,7 @@ impl DynamicBatchManager {
             property_tokens,
             ref_global_tokens,
             ref_semantic_tokens,
+            voice_id,
             args,
             response_tx,
             submitted_at: Instant::now(),
@@ -237,6 +239,7 @@ impl DynamicBatchManager {
                 property_tokens: req.property_tokens.clone(),
                 ref_global_tokens: req.ref_global_tokens.clone(),
                 ref_semantic_tokens: req.ref_semantic_tokens.clone(),
+                voice_id: req.voice_id.clone(),
                 args: req.args.clone(),
             })
             .collect();

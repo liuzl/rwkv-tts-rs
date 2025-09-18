@@ -1,6 +1,7 @@
 //! RWKV模型推理采样器
 //! 实现基于web-rwkv库的RWKV模型推理和采样功能
 
+use crate::voice_feature_manager::VoiceFeatureManager;
 use anyhow::Result;
 use memmap2::Mmap;
 use rand::{rngs::StdRng, Rng, SeedableRng};
@@ -155,6 +156,8 @@ pub struct TtsBatchRequest {
     pub ref_global_tokens: Option<Vec<i32>>,
     pub ref_semantic_tokens: Option<Vec<i32>>,
     pub args: SamplerArgs,
+    /// 音色ID，用于从缓存中快速获取tokens
+    pub voice_id: Option<String>,
 }
 
 /// 采样参数
@@ -528,6 +531,7 @@ impl RwkvSampler {
         property_tokens: &[i32],
         _ref_global_tokens: Option<&[i32]>,
         _ref_semantic_tokens: Option<&[i32]>,
+        voice_id: Option<&str>,
         args: &SamplerArgs,
     ) -> Result<(Vec<i32>, Vec<i32>)> {
         // 生成唯一请求ID
@@ -585,6 +589,18 @@ impl RwkvSampler {
         // === Global 阶段 ===
         let mut global_tokens: Vec<i32> = Vec::new();
         let mut semantic_tokens: Vec<i32> = Vec::new();
+
+        // 优先尝试从voice_id缓存获取tokens
+        if let Some(voice_id) = voice_id {
+            // 创建VoiceFeatureManager实例（假设使用默认RAF目录）
+            if let Ok(voice_manager) = VoiceFeatureManager::new("./raf") {
+                if let Ok((cached_global, cached_semantic)) =
+                    voice_manager.get_voice_tokens(voice_id).await
+                {
+                    return Ok((cached_global, cached_semantic));
+                }
+            }
+        }
 
         // 检查是否有预提取的音色特征
         let has_ref_audio = _ref_global_tokens.is_some() || _ref_semantic_tokens.is_some();
@@ -826,6 +842,7 @@ impl RwkvSampler {
                     &request.property_tokens,
                     request.ref_global_tokens.as_deref(),
                     request.ref_semantic_tokens.as_deref(),
+                    request.voice_id.as_deref(),
                     &request.args,
                 )
                 .await?;

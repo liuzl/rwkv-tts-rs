@@ -6,6 +6,7 @@ use crate::{
     onnx_session_pool::get_global_onnx_manager,
     properties_util,
     rwkv_sampler::{SamplerArgs, TtsBatchRequest},
+    voice_feature_manager::VoiceFeatureManager,
 };
 use anyhow::Result;
 use ndarray::{Array1, Array2};
@@ -31,6 +32,8 @@ pub struct LightweightTtsPipelineArgs {
     pub output_path: String,
     pub validate: bool,
     pub seed: Option<u64>,
+    // 新增：voice_id用于从缓存获取tokens
+    pub voice_id: Option<String>,
     // 新增：直接传入的音色特征tokens
     pub voice_global_tokens: Option<Vec<i32>>,
     pub voice_semantic_tokens: Option<Vec<i32>>,
@@ -55,6 +58,7 @@ impl Default for LightweightTtsPipelineArgs {
             output_path: String::from("./output"),
             validate: false,
             seed: None,
+            voice_id: None,
             voice_global_tokens: None,
             voice_semantic_tokens: None,
         }
@@ -596,8 +600,38 @@ impl LightweightTtsPipeline {
         // 2. 处理属性tokens或参考音频
         let ref_start = std::time::Instant::now();
         let (property_tokens, ref_global_tokens, ref_semantic_tokens) =
+            // 优先使用voice_id从缓存获取tokens
+            if let Some(voice_id) = &args.voice_id {
+                // 创建VoiceFeatureManager实例（假设使用默认RAF目录）
+                let voice_manager = VoiceFeatureManager::new("./raf")?;
+                match voice_manager.get_voice_tokens(voice_id).await {
+                    Ok((global_tokens, semantic_tokens)) => {
+                        #[cfg(debug_assertions)]
+                        {
+                            // 从缓存获取音色特征tokens成功
+                        }
+                        (vec![], Some(global_tokens), Some(semantic_tokens))
+                    }
+                    Err(_) => {
+                        #[cfg(debug_assertions)]
+                        {
+                            // 从缓存获取音色特征tokens失败，回退到其他方式
+                        }
+                        // 回退到直接传入的tokens或其他方式
+                        if let (Some(global_tokens), Some(semantic_tokens)) = (&args.voice_global_tokens, &args.voice_semantic_tokens) {
+                            (vec![], Some(global_tokens.clone()), Some(semantic_tokens.clone()))
+                        } else if args.zero_shot {
+                            let (global, semantic) = self.process_reference_audio(&args.ref_audio_path).await?;
+                            (vec![], Some(global), Some(semantic))
+                        } else {
+                            let tokens = self.generate_property_tokens(args);
+                            (tokens, None, None)
+                        }
+                    }
+                }
+            }
             // 优先使用直接传入的音色特征tokens
-            if let (Some(global_tokens), Some(semantic_tokens)) = (&args.voice_global_tokens, &args.voice_semantic_tokens) {
+            else if let (Some(global_tokens), Some(semantic_tokens)) = (&args.voice_global_tokens, &args.voice_semantic_tokens) {
                 #[cfg(debug_assertions)]
                 {
                     // 使用直接传入的音色特征tokens
@@ -652,6 +686,7 @@ impl LightweightTtsPipeline {
             ref_global_tokens,
             ref_semantic_tokens,
             args: sampler_args,
+            voice_id: args.voice_id.clone(),
         };
 
         // 5. 提交到动态批处理管理器并等待RWKV推理
@@ -663,6 +698,7 @@ impl LightweightTtsPipeline {
                 request.property_tokens,
                 request.ref_global_tokens,
                 request.ref_semantic_tokens,
+                request.voice_id,
                 request.args,
             )
             .await?;

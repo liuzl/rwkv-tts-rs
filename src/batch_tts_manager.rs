@@ -17,6 +17,7 @@ pub struct TtsRequest {
     pub property_tokens: Vec<i32>,
     pub ref_global_tokens: Option<Vec<i32>>,
     pub ref_semantic_tokens: Option<Vec<i32>>,
+    pub voice_id: Option<String>, // 音色ID，用于从缓存获取tokens
     pub args: SamplerArgs,
     pub response_tx: oneshot::Sender<Result<(Vec<i32>, Vec<i32>)>>,
 }
@@ -75,6 +76,7 @@ impl BatchTtsManager {
         property_tokens: Vec<i32>,
         ref_global_tokens: Option<Vec<i32>>,
         ref_semantic_tokens: Option<Vec<i32>>,
+        voice_id: Option<String>,
         args: SamplerArgs,
     ) -> Result<(Vec<i32>, Vec<i32>)> {
         let (response_tx, response_rx) = oneshot::channel();
@@ -84,6 +86,7 @@ impl BatchTtsManager {
             property_tokens,
             ref_global_tokens,
             ref_semantic_tokens,
+            voice_id,
             args,
             response_tx,
         };
@@ -193,6 +196,7 @@ impl BatchTtsManager {
                 &request.property_tokens,
                 request.ref_global_tokens.as_deref(),
                 request.ref_semantic_tokens.as_deref(),
+                request.voice_id.as_deref(),
                 &request.args,
             ).await;
             
@@ -211,6 +215,7 @@ impl BatchTtsManager {
                     property_tokens: req.property_tokens.clone(),
                     ref_global_tokens: req.ref_global_tokens.clone(),
                     ref_semantic_tokens: req.ref_semantic_tokens.clone(),
+                    voice_id: req.voice_id.clone(),
                     args: req.args.clone(),
                 }
             }).collect();

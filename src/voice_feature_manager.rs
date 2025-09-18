@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio::fs as async_fs;
 use uuid::Uuid;
 
@@ -52,6 +53,15 @@ pub struct VoicesMetadata {
     pub voices: Vec<VoiceMetadata>,
 }
 
+/// 缓存统计信息
+#[derive(Debug, Clone)]
+pub struct CacheStats {
+    pub total_voices: usize,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+    pub last_refresh: DateTime<Utc>,
+}
+
 /// 音色特征管理器
 #[derive(Debug)]
 pub struct VoiceFeatureManager {
@@ -59,8 +69,10 @@ pub struct VoiceFeatureManager {
     raf_dir: PathBuf,
     /// 元数据文件路径
     metadata_file: PathBuf,
-    /// 内存中的音色缓存
-    voice_cache: Arc<Mutex<HashMap<String, VoiceFeature>>>,
+    /// 内存中的音色缓存（使用Arc减少克隆开销）
+    voice_cache: Arc<Mutex<HashMap<String, Arc<VoiceFeature>>>>,
+    /// 缓存统计信息
+    cache_stats: Arc<Mutex<CacheStats>>,
 }
 
 impl VoiceFeatureManager {
@@ -85,11 +97,56 @@ impl VoiceFeatureManager {
             fs::create_dir_all(&upload_temp_dir)?;
         }
 
-        Ok(Self {
+        let manager = Self {
             raf_dir,
             metadata_file,
             voice_cache: Arc::new(Mutex::new(HashMap::new())),
-        })
+            cache_stats: Arc::new(Mutex::new(CacheStats {
+                total_voices: 0,
+                cache_hits: 0,
+                cache_misses: 0,
+                last_refresh: Utc::now(),
+            })),
+        };
+
+        Ok(manager)
+    }
+
+    /// 创建新的音色特征管理器并预加载所有音色
+    pub async fn new_with_preload<P: AsRef<Path>>(raf_dir: P) -> Result<Self> {
+        let manager = Self::new(raf_dir)?;
+        manager.preload_all_voices().await?;
+        Ok(manager)
+    }
+
+    /// 预加载所有音色特征到内存缓存
+    pub async fn preload_all_voices(&self) -> Result<()> {
+        let start_time = Instant::now();
+        let voices = self.list_voices().await?;
+        let mut loaded_count = 0;
+
+        for voice_meta in voices {
+            match self
+                .load_voice_feature_internal(&voice_meta.id, false)
+                .await
+            {
+                Ok(_) => loaded_count += 1,
+                Err(e) => {
+                    eprintln!("警告: 无法预加载音色 {}: {}", voice_meta.id, e);
+                }
+            }
+        }
+
+        // 更新统计信息
+        {
+            let mut stats = self.cache_stats.lock().unwrap();
+            stats.total_voices = loaded_count;
+            stats.last_refresh = Utc::now();
+        }
+
+        let elapsed = start_time.elapsed();
+        println!("预加载完成: {} 个音色，耗时 {:?}", loaded_count, elapsed);
+        Ok(())
     }
 
     /// 生成新的音色ID
@@ -170,7 +227,7 @@ impl VoiceFeatureManager {
         // 添加到缓存
         {
             let mut cache = self.voice_cache.lock().unwrap();
-            cache.insert(voice_id.clone(), voice_feature);
+            cache.insert(voice_id.clone(), Arc::new(voice_feature));
         }
 
         Ok(voice_id)
@@ -178,12 +235,31 @@ impl VoiceFeatureManager {
 
     /// 加载音色特征从文件（只支持JSON文本格式）
     pub async fn load_voice_feature(&self, voice_id: &str) -> Result<VoiceFeature> {
+        let arc_feature = self.load_voice_feature_internal(voice_id, true).await?;
+        Ok((*arc_feature).clone())
+    }
+
+    /// 内部加载方法，返回Arc<VoiceFeature>以减少克隆开销
+    async fn load_voice_feature_internal(
+        &self,
+        voice_id: &str,
+        update_stats: bool,
+    ) -> Result<Arc<VoiceFeature>> {
         // 先检查缓存
         {
             let cache = self.voice_cache.lock().unwrap();
             if let Some(voice_feature) = cache.get(voice_id) {
-                return Ok(voice_feature.clone());
+                if update_stats {
+                    let mut stats = self.cache_stats.lock().unwrap();
+                    stats.cache_hits += 1;
+                }
+                return Ok(Arc::clone(voice_feature));
             }
+        }
+
+        if update_stats {
+            let mut stats = self.cache_stats.lock().unwrap();
+            stats.cache_misses += 1;
         }
 
         // 从文件加载（只使用JSON格式）
@@ -205,13 +281,24 @@ impl VoiceFeatureManager {
             return Err(anyhow!("音色特征文件校验和不匹配: {}", voice_id));
         }
 
+        let arc_feature = Arc::new(voice_feature);
+
         // 添加到缓存
         {
             let mut cache = self.voice_cache.lock().unwrap();
-            cache.insert(voice_id.to_string(), voice_feature.clone());
+            cache.insert(voice_id.to_string(), Arc::clone(&arc_feature));
         }
 
-        Ok(voice_feature)
+        Ok(arc_feature)
+    }
+
+    /// 直接从缓存获取音色的tokens，避免重复文件读取
+    pub async fn get_voice_tokens(&self, voice_id: &str) -> Result<(Vec<i32>, Vec<i32>)> {
+        let voice_feature = self.load_voice_feature_internal(voice_id, true).await?;
+        Ok((
+            voice_feature.global_tokens.clone(),
+            voice_feature.semantic_tokens.clone(),
+        ))
     }
 
     /// 获取所有音色列表
@@ -247,12 +334,10 @@ impl VoiceFeatureManager {
 
     /// 重命名音色
     pub async fn rename_voice(&self, voice_id: &str, new_name: String) -> Result<()> {
-        // 更新缓存中的名称
+        // 从缓存中移除旧的，稍后会重新加载
         {
             let mut cache = self.voice_cache.lock().unwrap();
-            if let Some(voice_feature) = cache.get_mut(voice_id) {
-                voice_feature.name = new_name.clone();
-            }
+            cache.remove(voice_id);
         }
 
         // 重新加载并保存特征文件
@@ -357,6 +442,48 @@ impl VoiceFeatureManager {
     pub fn clear_cache(&self) {
         let mut cache = self.voice_cache.lock().unwrap();
         cache.clear();
+
+        // 重置统计信息
+        let mut stats = self.cache_stats.lock().unwrap();
+        stats.total_voices = 0;
+        stats.cache_hits = 0;
+        stats.cache_misses = 0;
+        stats.last_refresh = Utc::now();
+    }
+
+    /// 刷新缓存（重新加载所有音色）
+    pub async fn refresh_cache(&self) -> Result<()> {
+        self.clear_cache();
+        self.preload_all_voices().await
+    }
+
+    /// 获取缓存统计信息
+    pub fn get_cache_stats(&self) -> CacheStats {
+        let stats = self.cache_stats.lock().unwrap();
+        stats.clone()
+    }
+
+    /// 获取缓存命中率
+    pub fn get_cache_hit_rate(&self) -> f64 {
+        let stats = self.cache_stats.lock().unwrap();
+        let total_requests = stats.cache_hits + stats.cache_misses;
+        if total_requests == 0 {
+            0.0
+        } else {
+            stats.cache_hits as f64 / total_requests as f64
+        }
+    }
+
+    /// 检查音色是否在缓存中
+    pub fn is_voice_cached(&self, voice_id: &str) -> bool {
+        let cache = self.voice_cache.lock().unwrap();
+        cache.contains_key(voice_id)
+    }
+
+    /// 获取缓存中的音色数量
+    pub fn get_cached_voice_count(&self) -> usize {
+        let cache = self.voice_cache.lock().unwrap();
+        cache.len()
     }
 
     /// 获取RAF目录路径
