@@ -30,6 +30,14 @@ pub mod shared_runtime;
 pub mod normal_mode_inference;
 pub mod zero_shot_inference;
 
+// Performance optimization modules
+pub mod fast_sampler;
+pub mod inference_state_manager;
+pub mod logits_cache;
+pub mod performance_monitor;
+pub mod streaming_inference;
+pub mod vec_pool;
+
 // 新的状态管理架构
 pub use tts_state_manager::{
     TtsInferContext, TtsInferOptions, TtsStateId, TtsStateManager, TtsStateStats,

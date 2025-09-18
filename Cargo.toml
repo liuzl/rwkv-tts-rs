@@ -56,6 +56,8 @@ path = "bin/server.rs"
 
 [dev-dependencies]
 tempfile = "3.22.0"
+criterion = { version = "0.5", features = ["html_reports"] }
+rand_chacha = "0.3"
 
 # Release profile optimizations for maximum performance
 [profile.release]
@@ -75,3 +77,7 @@ opt-level = 3
 
 [profile.release.package.ort]
 opt-level = 3
+
+[[bench]]
+name = "sampling_benchmark"
+harness = false

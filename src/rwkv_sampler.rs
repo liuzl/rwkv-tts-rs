@@ -24,6 +24,16 @@ use web_rwkv::{
     wgpu::{self, Instance},
 };
 
+// Import optimization components
+use crate::fast_sampler::{FastSampler, SamplingConfig};
+use crate::inference_state_manager::{InferenceStateConfig, InferenceStateManager};
+use crate::logits_cache::{LogitsCache, LogitsCacheConfig};
+use crate::performance_monitor::{MonitorConfig, PerformanceMonitor};
+use crate::streaming_inference::{BatchConfig, StreamingInference};
+use crate::vec_pool::{global_vec_pools, VecPool};
+use std::sync::Arc;
+use std::time::Duration;
+
 /// 公开的采样函数，支持传入RNG参数
 pub fn sample_logits(
     logits: &[f32],
@@ -238,6 +248,16 @@ pub struct RwkvSampler {
     batch_counter: AtomicUsize,
     // Token chunk size配置
     token_chunk_size: usize,
+    // Performance optimization components
+    fast_sampler: FastSampler,
+    performance_monitor: Arc<PerformanceMonitor>,
+    // Advanced optimization components
+    #[allow(dead_code)]
+    logits_cache: LogitsCache,
+    vec_pool: Arc<VecPool<f32>>,
+    #[allow(dead_code)]
+    streaming_inference: Option<Arc<StreamingInference>>,
+    inference_state_manager: Arc<InferenceStateManager>,
 }
 impl RwkvSampler {
     /// 创建默认量化配置
@@ -395,12 +415,66 @@ impl RwkvSampler {
         let vocab_content = std::fs::read_to_string(vocab_path)?;
         let tokenizer = Tokenizer::new(&vocab_content)?;
 
+        // Initialize optimization components
+        let _sampling_config = SamplingConfig {
+            temperature: 1.0,
+            top_p: 0.85,
+            top_k: 0,
+            use_fast_path: true,
+            fast_path_threshold: 0.9,
+            use_simd: cfg!(target_arch = "x86_64"),
+        };
+        let fast_sampler = FastSampler::new();
+        let performance_monitor = Arc::new(PerformanceMonitor::new(MonitorConfig::default()));
+
+        // Initialize advanced optimization components
+        let cache_config = LogitsCacheConfig {
+            max_entries: 1000,
+            max_age: std::time::Duration::from_secs(300),
+            enable_prefetch: true,
+            prefetch_window: 10,
+            hit_rate_threshold: 0.8,
+        };
+        let logits_cache = LogitsCache::new(cache_config.clone());
+        let vec_pool = Arc::new(VecPool::<f32>::new(100));
+
+        // Initialize inference state manager
+        let inference_state_config = InferenceStateConfig {
+            max_cache_entries: 200,
+            max_entry_age: std::time::Duration::from_secs(600),
+            batch_inference_size: 8,
+            prediction_window: 16,
+            enable_async_pre_inference: true,
+            state_similarity_threshold: 0.95,
+        };
+        let inference_state_manager = Arc::new(InferenceStateManager::new(
+            inference_state_config,
+            Some(performance_monitor.clone()),
+        ));
+
+        // Initialize StreamingInference with separate cache instance
+        let batch_config = BatchConfig {
+            max_batch_size: 8,
+            batch_timeout: Duration::from_millis(50),
+            dynamic_batching: true,
+            min_batch_size: 2,
+            prefetch_window: 4,
+        };
+        let streaming_cache = Arc::new(LogitsCache::new(cache_config));
+        let streaming_inference = Arc::new(StreamingInference::new(batch_config, streaming_cache));
+
         Ok(Self {
             runtime,
             tokenizer,
             rng: None,
             batch_counter: AtomicUsize::new(0),
             token_chunk_size,
+            fast_sampler,
+            performance_monitor,
+            logits_cache,
+            vec_pool,
+            streaming_inference: Some(streaming_inference),
+            inference_state_manager,
         })
     }
 
@@ -470,6 +544,16 @@ impl RwkvSampler {
     /// 只读访问内部tokenizer（用于外部按相同方式编码属性）
     pub fn tokenizer(&self) -> &Tokenizer {
         &self.tokenizer
+    }
+
+    /// 获取性能统计信息
+    pub fn get_performance_stats(&self) -> String {
+        self.performance_monitor.generate_report()
+    }
+
+    /// 重置性能统计
+    pub fn reset_performance_stats(&self) {
+        self.performance_monitor.reset();
     }
 
     /// 生成文本（示例）
@@ -573,16 +657,27 @@ impl RwkvSampler {
         // 这避免了不同请求之间的状态污染问题
         // 创建独立推理上下文
         let batch = RnnInputBatch::new(input_tokens_u32.clone(), RnnOption::Last);
-        let mut inference = RnnInput::new(vec![batch], self.token_chunk_size);
+        let inference = RnnInput::new(vec![batch], self.token_chunk_size);
 
         // 重要：确保推理上下文完全独立，不受之前请求影响
         // 推理上下文已隔离
-        // 消化输入直到产生输出，并保留最后一次logits
-        let mut last_logits: Vec<f32> = loop {
-            let (next_inference, output) = self.runtime.infer(inference).await?;
-            inference = next_inference;
-            if output[0].0.size() > 0 {
-                break output[0].0.clone().to_vec();
+        // 使用推理状态管理器优化推理调用
+        let context_id = format!("tts_prefill_{}", self.generate_request_id());
+        let (mut inference, prefill_logits) = self
+            .inference_state_manager
+            .smart_inference(&mut self.runtime, inference, &context_id, 1)
+            .await?;
+
+        let mut last_logits: Vec<f32> = if !prefill_logits.is_empty() {
+            prefill_logits[0].clone()
+        } else {
+            // 回退到传统方式
+            loop {
+                let (next_inference, output) = self.runtime.infer(inference).await?;
+                inference = next_inference;
+                if output[0].0.size() > 0 {
+                    break output[0].0.clone().to_vec();
+                }
             }
         };
 
@@ -700,20 +795,44 @@ impl RwkvSampler {
 
         // Python实现固定生成32个global tokens，并且仅在前4096维内采样
         let global_tokens_size: usize = 32;
+
+        // 使用批量推理优化Global阶段
+        let global_context_id = format!("tts_global_{}", self.generate_request_id());
+        let mut global_logits_cache: Vec<Vec<f32>> = Vec::new();
+        let mut cache_index = 0;
+
         // 开始生成global tokens
         for i in 0..global_tokens_size {
-            // 取得当前可用的logits：首步使用prefill得到的logits，其后每步从runtime获取
+            // 取得当前可用的logits
             let logits: &[f32] = if i == 0 {
                 &last_logits
+            } else if cache_index < global_logits_cache.len() {
+                // 使用缓存的logits
+                &global_logits_cache[cache_index]
             } else {
-                // 确保拿到非空logits
-                loop {
-                    let (next_inference, output) = self.runtime.infer(inference).await?;
-                    inference = next_inference;
-                    if output[0].0.size() > 0 {
-                        // 直接使用引用，避免clone
-                        last_logits = output[0].0.clone().to_vec();
-                        break &last_logits;
+                // 需要批量获取更多logits
+                let remaining_tokens = global_tokens_size - i;
+                let batch_size = remaining_tokens.min(8); // 批量推理8个token
+
+                let (next_inference, batch_logits) = self
+                    .inference_state_manager
+                    .smart_inference(&mut self.runtime, inference, &global_context_id, batch_size)
+                    .await?;
+                inference = next_inference;
+
+                if !batch_logits.is_empty() {
+                    global_logits_cache.extend(batch_logits);
+                    cache_index = 0;
+                    &global_logits_cache[cache_index]
+                } else {
+                    // 回退到传统方式
+                    loop {
+                        let (next_inference, output) = self.runtime.infer(inference).await?;
+                        inference = next_inference;
+                        if output[0].0.size() > 0 {
+                            last_logits = output[0].0.clone().to_vec();
+                            break &last_logits;
+                        }
                     }
                 }
             };
@@ -732,6 +851,11 @@ impl RwkvSampler {
             global_tokens.push(next_id as i32);
             // 反馈到模型：直接使用原始ID（与C++代码一致）
             inference.batches[0].push(next_id as u32);
+
+            // 更新缓存索引
+            if cache_index < global_logits_cache.len() {
+                cache_index += 1;
+            }
             // Global token生成
         }
 
@@ -748,19 +872,50 @@ impl RwkvSampler {
 
         // 语义阶段：限制最大生成步数为2048
         let semantic_limit: usize = usize::min(args.max_tokens, 2048);
+
+        // 使用批量推理优化Semantic阶段
+        let semantic_context_id = format!("tts_semantic_{}", self.generate_request_id());
+        let mut semantic_logits_cache: Vec<Vec<f32>> = Vec::new();
+        let mut semantic_cache_index = 0;
+
         // 开始生成semantic tokens
         for i in 0..semantic_limit {
             // 取得当前语义阶段的logits：首步使用注入标签后的logits，其后每步从runtime获取
             let logits: &[f32] = if i == 0 {
                 &last_sem_logits
+            } else if semantic_cache_index < semantic_logits_cache.len() {
+                // 使用缓存的logits
+                &semantic_logits_cache[semantic_cache_index]
             } else {
-                loop {
-                    let (next_inference, output) = self.runtime.infer(inference).await?;
-                    inference = next_inference;
-                    if output[0].0.size() > 0 {
-                        // 重用变量，避免重复分配
-                        last_sem_logits = output[0].0.clone().to_vec();
-                        break &last_sem_logits;
+                // 需要批量获取更多logits
+                let remaining_tokens = semantic_limit - i;
+                let batch_size = remaining_tokens.min(16); // 批量推理16个token
+
+                let (next_inference, batch_logits) = self
+                    .inference_state_manager
+                    .smart_inference(
+                        &mut self.runtime,
+                        inference,
+                        &semantic_context_id,
+                        batch_size,
+                    )
+                    .await?;
+                inference = next_inference;
+
+                if !batch_logits.is_empty() {
+                    semantic_logits_cache.extend(batch_logits);
+                    semantic_cache_index = 0;
+                    &semantic_logits_cache[semantic_cache_index]
+                } else {
+                    // 回退到传统方式
+                    loop {
+                        let (next_inference, output) = self.runtime.infer(inference).await?;
+                        inference = next_inference;
+                        if output[0].0.size() > 0 {
+                            // 重用变量，避免重复分配
+                            last_sem_logits = output[0].0.clone().to_vec();
+                            break &last_sem_logits;
+                        }
                     }
                 }
             };
@@ -795,6 +950,11 @@ impl RwkvSampler {
             semantic_tokens.push(next_id as i32);
             // 语义阶段反馈：直接反馈原始id（经验）
             inference.batches[0].push(next_id as u32);
+
+            // 更新缓存索引
+            if semantic_cache_index < semantic_logits_cache.len() {
+                semantic_cache_index += 1;
+            }
             // Semantic token生成
         }
 
@@ -894,13 +1054,41 @@ impl RwkvSampler {
         forbid_token: Option<usize>,
         rng: &mut Option<StdRng>,
     ) -> usize {
+        // Start performance monitoring
+        let start_time = std::time::Instant::now();
+
+        // TODO: 实现采样结果缓存（当前LogitsCache用于缓存logits向量）
+
+        // Try fast path first
+        let sampling_config = SamplingConfig {
+            temperature: args.temperature,
+            top_p: args.top_p,
+            top_k: args.top_k,
+            use_fast_path: true,
+            fast_path_threshold: 0.9,
+            use_simd: cfg!(target_arch = "x86_64"),
+        };
+
+        if let Some(result) =
+            self.fast_sampler
+                .try_fast_path(logits, &sampling_config, forbid_token)
+        {
+            self.performance_monitor.record_cache_hit();
+            self.performance_monitor
+                .record_sampling_latency(start_time.elapsed());
+            return result;
+        }
+
+        // Fall back to optimized full path
+        // 记录完整路径回退
+        self.performance_monitor.record_error();
         let vocab_size = logits.len();
         if vocab_size == 0 {
             return 0;
         }
 
-        // 预分配索引向量，避免重复分配
-        let mut indices: Vec<usize> = Vec::with_capacity(vocab_size);
+        // Use VecPool for optimized memory allocation
+        let mut indices = global_vec_pools().get_usize_vec(vocab_size);
         if let Some(ft) = forbid_token {
             for i in 0..vocab_size {
                 if i != ft {
@@ -949,8 +1137,8 @@ impl RwkvSampler {
         // 数值稳定的 softmax：减去最大值并clamp指数区间
         let inv_t = 1.0 / temperature;
 
-        // 预分配并原地计算，避免中间向量
-        let mut probs: Vec<f32> = Vec::with_capacity(indices.len());
+        // Use VecPool for probs allocation
+        let mut probs = self.vec_pool.get();
         let mut max_scaled = f32::NEG_INFINITY;
 
         // 第一遍：计算缩放值并找到最大值
@@ -1012,9 +1200,18 @@ impl RwkvSampler {
         for (i, &p) in probs.iter().enumerate() {
             cumsum += p;
             if r <= cumsum {
-                return indices[i];
+                let result = indices[i];
+                self.performance_monitor
+                    .record_sampling_latency(start_time.elapsed());
+                return result;
             }
         }
-        *indices.last().unwrap_or(&0)
+        let result = *indices.last().unwrap_or(&0);
+
+        // Record sampling time
+        self.performance_monitor
+            .record_sampling_latency(start_time.elapsed());
+
+        result
     }
 }

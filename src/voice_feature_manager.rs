@@ -334,13 +334,7 @@ impl VoiceFeatureManager {
 
     /// 重命名音色
     pub async fn rename_voice(&self, voice_id: &str, new_name: String) -> Result<()> {
-        // 从缓存中移除旧的，稍后会重新加载
-        {
-            let mut cache = self.voice_cache.lock().unwrap();
-            cache.remove(voice_id);
-        }
-
-        // 重新加载并保存特征文件
+        // 先加载当前特征文件
         let mut voice_feature = self.load_voice_feature(voice_id).await?;
         voice_feature.name = new_name.clone();
 
@@ -362,7 +356,14 @@ impl VoiceFeatureManager {
         async_fs::write(&raf_file_path, &final_data).await?;
 
         // 更新元数据
-        self.update_voice_metadata_name(voice_id, new_name).await?;
+        self.update_voice_metadata_name(voice_id, new_name.clone())
+            .await?;
+
+        // 更新缓存中的条目
+        {
+            let mut cache = self.voice_cache.lock().unwrap();
+            cache.insert(voice_id.to_string(), Arc::new(voice_feature));
+        }
 
         Ok(())
     }
@@ -532,6 +533,11 @@ mod tests {
             .unwrap();
         let renamed_feature = manager.load_voice_feature(&voice_id).await.unwrap();
         assert_eq!(renamed_feature.name, "新名称");
+
+        // 验证元数据也被更新
+        let voices_after_rename = manager.list_voices().await.unwrap();
+        assert_eq!(voices_after_rename.len(), 1);
+        assert_eq!(voices_after_rename[0].name, "新名称");
 
         // 测试删除
         manager.delete_voice(&voice_id).await.unwrap();
