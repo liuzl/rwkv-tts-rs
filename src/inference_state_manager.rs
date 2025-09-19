@@ -6,7 +6,7 @@
 //! 3. 预测性推理：基于历史模式预测下一步需要的logits
 //! 4. 异步推理：在后台预先计算可能需要的logits
 
-use crate::performance_monitor::PerformanceMonitor;
+// 移除性能监控组件
 use anyhow::Result;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -76,8 +76,7 @@ pub struct InferenceStateManager {
     /// 异步推理任务句柄
     #[allow(dead_code)]
     async_tasks: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
-    /// 性能监控器
-    performance_monitor: Option<Arc<PerformanceMonitor>>,
+    // 移除性能监控器
 }
 
 /// 推理状态统计信息
@@ -99,17 +98,13 @@ pub struct InferenceStateStats {
 
 impl InferenceStateManager {
     /// 创建新的推理状态管理器
-    pub fn new(
-        config: InferenceStateConfig,
-        performance_monitor: Option<Arc<PerformanceMonitor>>,
-    ) -> Self {
+    pub fn new(config: InferenceStateConfig) -> Self {
         Self {
             config,
             state_cache: Arc::new(RwLock::new(HashMap::new())),
             access_queue: Arc::new(Mutex::new(VecDeque::new())),
             stats: Arc::new(Mutex::new(InferenceStateStats::default())),
             async_tasks: Arc::new(Mutex::new(Vec::new())),
-            performance_monitor,
         }
     }
 
@@ -168,10 +163,7 @@ impl InferenceStateManager {
         // 缓存推理结果
         self.update_cache(context_id, &new_logits).await;
 
-        // 更新性能统计
-        if let Some(monitor) = &self.performance_monitor {
-            monitor.record_inference_latency(start_time.elapsed());
-        }
+        // 移除性能统计
 
         Ok((current_inference, cached_logits))
     }
@@ -306,16 +298,13 @@ static GLOBAL_INFERENCE_STATE_MANAGER: std::sync::OnceLock<InferenceStateManager
 /// 获取全局推理状态管理器
 pub fn global_inference_state_manager() -> &'static InferenceStateManager {
     GLOBAL_INFERENCE_STATE_MANAGER
-        .get_or_init(|| InferenceStateManager::new(InferenceStateConfig::default(), None))
+        .get_or_init(|| InferenceStateManager::new(InferenceStateConfig::default()))
 }
 
 /// 初始化全局推理状态管理器
-pub fn init_global_inference_state_manager(
-    config: InferenceStateConfig,
-    performance_monitor: Option<Arc<PerformanceMonitor>>,
-) {
+pub fn init_global_inference_state_manager(config: InferenceStateConfig) {
     GLOBAL_INFERENCE_STATE_MANAGER
-        .set(InferenceStateManager::new(config, performance_monitor))
+        .set(InferenceStateManager::new(config))
         .map_err(|_| "Global inference state manager already initialized")
         .ok();
 }

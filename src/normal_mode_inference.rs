@@ -8,28 +8,34 @@ use crate::shared_runtime::TtsInferContext;
 
 /// 执行普通模式推理
 pub async fn execute_normal_inference(
-    infer_context: &TtsInferContext,
-    request: crate::rwkv_sampler::TtsBatchRequest,
+    infer_context: TtsInferContext,
     text_tokens: Vec<i32>,
+    property_tokens: Vec<i32>,
+    rng: rand::rngs::StdRng,
+    request: &crate::rwkv_sampler::TtsBatchRequest,
 ) -> Result<(Vec<i32>, Vec<i32>)> {
     let request_id = &infer_context.request_id;
     // 开始普通模式推理
 
-    // 为本次请求创建独立RNG（可复现且互不干扰）
-    // 普通模式不是声音克隆，使用正常的随机数生成逻辑
-    let rng: rand::rngs::StdRng = if let Some(seed) = request.args.seed {
-        rand::rngs::StdRng::seed_from_u64(seed)
-    } else {
-        rand::rngs::StdRng::from_rng(rand::thread_rng()).expect("failed to seed StdRng")
-    };
+    // 获取采样参数
+    let sampler_args = &request.args;
 
-    // 获取tokenizer和runtime
+    // Acquire runtime semaphore for the entire inference to ensure isolation
+    let _runtime_permit = infer_context
+        .runtime_semaphore
+        .acquire()
+        .await
+        .map_err(|e| anyhow::anyhow!("无法获取运行时信号量: {}", e))?;
+
+    // 已获取信号量许可，开始推理
+
+    // 获取runtime
     let runtime = &infer_context.runtime;
     let state = &infer_context.state;
 
     // 构建输入序列：属性tokens + TTS_TAG_2 + 文本tokens + TTS_TAG_0
     let mut input_tokens: Vec<i32> = Vec::new();
-    input_tokens.extend_from_slice(&request.property_tokens);
+    input_tokens.extend_from_slice(&property_tokens);
     input_tokens.push(crate::rwkv_sampler::TTS_TAG_2);
     input_tokens.extend_from_slice(&text_tokens);
     input_tokens.push(crate::rwkv_sampler::TTS_TAG_0);
@@ -38,7 +44,7 @@ pub async fn execute_normal_inference(
 
     // === Prefill 阶段 ===
     let input_tokens_u32: Vec<u32> = input_tokens.iter().map(|&t| t as u32).collect();
-    let token_chunk_size = request.args.token_chunk_size;
+    let token_chunk_size = infer_context.options.token_chunk_size;
 
     // Prefill阶段 - 初始化独立状态
 
@@ -68,28 +74,41 @@ pub async fn execute_normal_inference(
     let mut semantic_tokens: Vec<i32> = Vec::new();
 
     // 普通模式进行正常的生成流程（不使用预提取特征）
-    // 设置采样参数，优化EOS生成概率
-    let sampler_args = &request.args;
+    // 从推理上下文获取采样参数
+    let mut args_global = crate::rwkv_sampler::SamplerArgs {
+        temperature: infer_context.options.temperature,
+        top_k: if infer_context.options.top_k == 0 {
+            20
+        } else {
+            infer_context.options.top_k
+        },
+        top_p: infer_context.options.top_p,
+        seed: infer_context.options.seed,
+        max_tokens: 32, // Global阶段固定32个tokens
+        voice_fidelity: infer_context.options.voice_fidelity,
+        layered_randomness: infer_context.options.layered_randomness.clone(),
+        token_chunk_size: infer_context.options.token_chunk_size,
+    };
 
-    let mut args_global = sampler_args.clone();
-    let mut args_semantic = sampler_args.clone();
+    let args_semantic = crate::rwkv_sampler::SamplerArgs {
+        temperature: 1.0, // Semantic阶段使用固定参数
+        top_p: 0.95,
+        top_k: 80,
+        seed: infer_context.options.seed,
+        max_tokens: 2048,
+        voice_fidelity: infer_context.options.voice_fidelity,
+        layered_randomness: infer_context.options.layered_randomness.clone(),
+        token_chunk_size: infer_context.options.token_chunk_size,
+    };
 
-    // 优化global阶段参数
-    if args_global.top_k == 0 {
-        args_global.top_k = 20;
-    }
-
-    // Semantic阶段使用固定参数，与Python代码保持严格一致
-    args_semantic.temperature = 1.0;
-    args_semantic.top_p = 0.95;
-    args_semantic.top_k = 80;
+    // 简化采样，移除优化组件
 
     // 创建独立的RNG用于不同阶段
-    let mut global_rng = if sampler_args.layered_randomness.use_independent_seeds {
-        if let Some(seed) = sampler_args.seed {
+    let mut global_rng = if args_global.layered_randomness.use_independent_seeds {
+        if let Some(seed) = args_global.seed {
             // 用户提供了seed，使用确定性采样
             Some(StdRng::seed_from_u64(seed.wrapping_add(
-                sampler_args.layered_randomness.global_seed_offset,
+                args_global.layered_randomness.global_seed_offset,
             )))
         } else {
             // 没有seed，创建随机RNG
@@ -99,11 +118,11 @@ pub async fn execute_normal_inference(
         Some(rng.clone())
     };
 
-    let mut semantic_rng = if sampler_args.layered_randomness.use_independent_seeds {
-        if let Some(seed) = sampler_args.seed {
+    let mut semantic_rng = if args_semantic.layered_randomness.use_independent_seeds {
+        if let Some(seed) = args_semantic.seed {
             // 用户提供了seed，使用确定性采样
             Some(StdRng::seed_from_u64(seed.wrapping_add(
-                sampler_args.layered_randomness.semantic_seed_offset,
+                args_semantic.layered_randomness.semantic_seed_offset,
             )))
         } else {
             // 没有seed，创建随机RNG
@@ -121,10 +140,13 @@ pub async fn execute_normal_inference(
     let global_conservative_factor = global_fidelity_factor * (1.0 - global_randomness_factor);
 
     // Global阶段采用更保守的参数调整
-    args_global.temperature *= (0.3 + 0.7 * (1.0 - global_conservative_factor)).max(0.1);
-    args_global.top_p = (args_global.top_p * (0.8 + 0.2 * global_conservative_factor)).max(0.2);
-    args_global.top_k =
-        ((args_global.top_k as f32) * (0.9 + 0.1 * global_conservative_factor)).max(5.0) as usize;
+    args_global.temperature *=
+        (0.3_f32 + 0.7_f32 * (1.0_f32 - global_conservative_factor)).max(0.1_f32);
+    args_global.top_p =
+        (args_global.top_p * (0.8_f32 + 0.2_f32 * global_conservative_factor)).max(0.2_f32);
+    args_global.top_k = ((args_global.top_k as f32)
+        * (0.9_f32 + 0.1_f32 * global_conservative_factor))
+        .max(5.0_f32) as usize;
 
     // Semantic阶段使用固定参数
 
@@ -155,10 +177,11 @@ pub async fn execute_normal_inference(
         // 直接使用原始logits，不进行增强处理
         let sampling_logits = logits[..vocab_global].to_vec();
 
-        let next_id = crate::rwkv_sampler::sample_logits(
+        // 使用基本采样
+        let next_id = crate::rwkv_sampler::sample_logits_impl(
             &sampling_logits,
             &args_global,
-            None,
+            None, // forbid_token
             &mut global_rng,
         );
 
@@ -249,11 +272,11 @@ pub async fn execute_normal_inference(
             f32::NEG_INFINITY
         };
 
-        // 直接使用屏蔽后的logits进行采样
-        let next_id = crate::rwkv_sampler::sample_logits(
+        // 使用基本采样
+        let next_id = crate::rwkv_sampler::sample_logits_impl(
             &logits_masked,
             &args_semantic,
-            None,
+            None, // forbid_token
             &mut semantic_rng,
         );
 

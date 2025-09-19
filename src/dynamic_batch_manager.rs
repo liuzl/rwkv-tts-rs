@@ -13,7 +13,7 @@ use crate::batch_types::*;
 
 use crate::shared_runtime::*;
 
-// 引入新的推理模块
+// 重新导入推理函数以便使用优化组件
 use crate::normal_mode_inference::execute_normal_inference;
 use crate::zero_shot_inference::execute_zero_shot_inference;
 
@@ -118,6 +118,49 @@ impl DynamicBatchManager {
         response_rx
             .await
             .map_err(|e| anyhow::anyhow!("接收响应失败: {}", e))?
+    }
+
+    /// 批量生成TTS（支持音频解码批处理）
+    pub async fn generate_tts_batch(
+        &self,
+        requests: Vec<crate::rwkv_sampler::TtsBatchRequest>,
+    ) -> Result<Vec<(Vec<i32>, Vec<i32>)>> {
+        let batch_size = requests.len();
+        let mut response_rxs = Vec::with_capacity(batch_size);
+
+        // 创建所有请求
+        for request in requests {
+            let (response_tx, response_rx) = oneshot::channel();
+            response_rxs.push(response_rx);
+
+            let dynamic_request = DynamicTtsRequest {
+                text: request.text,
+                property_tokens: request.property_tokens,
+                ref_global_tokens: request.ref_global_tokens,
+                ref_semantic_tokens: request.ref_semantic_tokens,
+                voice_id: request.voice_id,
+                args: request.args,
+                response_tx,
+                submitted_at: Instant::now(),
+                batch_id: 0,
+            };
+
+            self.request_tx
+                .send_async(dynamic_request)
+                .await
+                .map_err(|e| anyhow::anyhow!("发送批处理请求失败: {}", e))?;
+        }
+
+        // 等待所有响应
+        let mut results = Vec::with_capacity(batch_size);
+        for response_rx in response_rxs {
+            let result = response_rx
+                .await
+                .map_err(|e| anyhow::anyhow!("接收批处理响应失败: {}", e))??;
+            results.push(result);
+        }
+
+        Ok(results)
     }
 
     /// 核心运行时 - 负责收集请求并分发到推理工作线程
@@ -455,15 +498,6 @@ impl DynamicBatchManager {
             rand::rngs::StdRng::from_rng(rand::thread_rng()).expect("failed to seed StdRng")
         };
 
-        // Acquire runtime semaphore for the entire inference to ensure isolation
-        let _runtime_permit = infer_context
-            .runtime_semaphore
-            .acquire()
-            .await
-            .map_err(|e| anyhow::anyhow!("无法获取运行时信号量: {}", e))?;
-
-        // 已获取信号量许可，开始推理
-
         // 获取tokenizer
         let tokenizer = &infer_context.tokenizer;
 
@@ -485,15 +519,28 @@ impl DynamicBatchManager {
         let is_zero_shot =
             request.ref_global_tokens.is_some() && request.ref_semantic_tokens.is_some();
 
+        // 检测是否为Zero-shot模式（有预提取的音色特征）
         if is_zero_shot {
-            // 检测到Zero-shot模式，调用专用推理函数
-            return execute_zero_shot_inference(&infer_context, request, text_tokens, Some(rng))
-                .await;
+            // 检测到Zero-shot模式，调用zero-shot推理
+            return execute_zero_shot_inference(
+                infer_context,
+                text_tokens,
+                request.property_tokens.clone(),
+                rng,
+                &request,
+            )
+            .await;
         }
 
         // 普通模式推理
-        // 普通模式推理，调用专用推理函数
-        return execute_normal_inference(&infer_context, request, text_tokens).await;
+        execute_normal_inference(
+            infer_context,
+            text_tokens,
+            request.property_tokens.clone(),
+            rng,
+            &request,
+        )
+        .await
     }
 
     /// 获取配置

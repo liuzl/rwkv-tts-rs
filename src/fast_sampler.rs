@@ -1,25 +1,19 @@
-//! FastSampler - 高性能采样器优化采样算法
-//!
-//! 通过SIMD优化、快速路径和智能缓存显著提升采样性能
+//! 高性能采样器实现
+//! 使用SIMD、内存池和快速路径优化采样性能
 
-use rand::prelude::*;
-use rand::rngs::StdRng;
-use std::sync::atomic::{AtomicU64, Ordering};
+use once_cell::sync::Lazy;
+use parking_lot::Mutex;
+use rand::{rngs::StdRng, Rng, SeedableRng};
+use std::arch::x86_64::*;
 
 /// 采样配置
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct SamplingConfig {
-    /// 温度参数
     pub temperature: f32,
-    /// Top-p参数
     pub top_p: f32,
-    /// Top-k参数
     pub top_k: usize,
-    /// 启用快速路径
     pub use_fast_path: bool,
-    /// 快速路径阈值
     pub fast_path_threshold: f32,
-    /// 启用SIMD优化
     pub use_simd: bool,
 }
 
@@ -31,296 +25,25 @@ impl Default for SamplingConfig {
             top_k: 50,
             use_fast_path: true,
             fast_path_threshold: 0.7,
-            use_simd: cfg!(target_arch = "x86_64"),
+            use_simd: true,
         }
     }
 }
 
-/// FastSampler统计信息
-#[derive(Debug, Default, Clone)]
-pub struct FastSamplerStats {
-    /// 总采样次数
-    pub total_samples: u64,
-    /// 快速路径命中次数
-    pub fast_path_hits: u64,
-    /// SIMD优化使用次数
-    pub simd_optimizations: u64,
-    /// 平均采样时间（纳秒）
-    pub avg_sample_time_ns: f64,
-    /// 确定性采样次数
-    pub deterministic_samples: u64,
-}
+/// 全局内存池
+static VEC_POOL: Lazy<Mutex<VecPool<f32>>> = Lazy::new(|| Mutex::new(VecPool::new(1000)));
 
-impl FastSamplerStats {
-    /// 计算快速路径命中率
-    pub fn fast_path_hit_rate(&self) -> f32 {
-        let total = self.total_samples + self.fast_path_hits;
-        if total == 0 {
-            0.0
-        } else {
-            self.fast_path_hits as f32 / total as f32
-        }
-    }
-
-    /// 重置统计信息
-    pub fn reset(&mut self) {
-        *self = Default::default();
-    }
-}
-
-/// FastSampler - 高性能采样器
-pub struct FastSampler {
-    /// 统计信息
-    #[allow(dead_code)]
-    stats: FastSamplerStats,
-    /// 性能计数器
-    total_samples: AtomicU64,
-    fast_path_hits: AtomicU64,
-    simd_optimizations: AtomicU64,
-    deterministic_samples: AtomicU64,
-}
+/// 快速采样器
+#[derive(Default)]
+pub struct FastSampler;
 
 impl FastSampler {
-    /// 创建新的FastSampler
+    /// 创建新的快速采样器
     pub fn new() -> Self {
-        Self {
-            stats: FastSamplerStats::default(),
-            total_samples: AtomicU64::new(0),
-            fast_path_hits: AtomicU64::new(0),
-            simd_optimizations: AtomicU64::new(0),
-            deterministic_samples: AtomicU64::new(0),
-        }
+        Self
     }
 
-    /// 尝试快速路径采样
-    pub fn try_fast_path(
-        &self,
-        logits: &[f32],
-        config: &SamplingConfig,
-        forbid_token: Option<usize>,
-    ) -> Option<usize> {
-        if !config.use_fast_path || logits.is_empty() {
-            return None;
-        }
-
-        // 快速路径1：确定性采样（温度极低或top_k=1）
-        if config.temperature < 0.1 || config.top_k == 1 {
-            let result = self.deterministic_sample(logits, forbid_token);
-            self.fast_path_hits.fetch_add(1, Ordering::Relaxed);
-            self.deterministic_samples.fetch_add(1, Ordering::Relaxed);
-            return Some(result);
-        }
-
-        // 快速路径2：单峰分布检测
-        if let Some(result) = self.try_single_peak_sampling(logits, config, forbid_token) {
-            self.fast_path_hits.fetch_add(1, Ordering::Relaxed);
-            return Some(result);
-        }
-
-        // 快速路径3：高置信度采样
-        if let Some(result) = self.try_high_confidence_sampling(logits, config, forbid_token) {
-            self.fast_path_hits.fetch_add(1, Ordering::Relaxed);
-            return Some(result);
-        }
-
-        None
-    }
-
-    /// 确定性采样（选择最大logit）
-    fn deterministic_sample(&self, logits: &[f32], forbid_token: Option<usize>) -> usize {
-        let mut best_idx = 0;
-        let mut best_val = f32::NEG_INFINITY;
-
-        for (i, &logit) in logits.iter().enumerate() {
-            if Some(i) == forbid_token {
-                continue;
-            }
-            if logit > best_val {
-                best_val = logit;
-                best_idx = i;
-            }
-        }
-
-        best_idx
-    }
-
-    /// 单峰分布快速采样
-    fn try_single_peak_sampling(
-        &self,
-        logits: &[f32],
-        config: &SamplingConfig,
-        forbid_token: Option<usize>,
-    ) -> Option<usize> {
-        if logits.len() < 3 {
-            return None;
-        }
-
-        // 找到最大值和次大值
-        let mut max_val = f32::NEG_INFINITY;
-        let mut max_idx = 0;
-        let mut second_max_val = f32::NEG_INFINITY;
-
-        for (i, &logit) in logits.iter().enumerate() {
-            if Some(i) == forbid_token {
-                continue;
-            }
-
-            if logit > max_val {
-                second_max_val = max_val;
-                max_val = logit;
-                max_idx = i;
-            } else if logit > second_max_val {
-                second_max_val = logit;
-            }
-        }
-
-        // 检查是否为单峰分布（最大值远大于次大值）
-        let dominance_ratio = if second_max_val > f32::NEG_INFINITY {
-            (max_val - second_max_val) / config.temperature
-        } else {
-            f32::INFINITY
-        };
-
-        if dominance_ratio > 2.0 {
-            // 单峰分布，直接返回最大值
-            return Some(max_idx);
-        }
-
-        None
-    }
-
-    /// 高置信度快速采样
-    fn try_high_confidence_sampling(
-        &self,
-        logits: &[f32],
-        config: &SamplingConfig,
-        forbid_token: Option<usize>,
-    ) -> Option<usize> {
-        // 使用SIMD优化计算softmax（如果可用）
-        if config.use_simd && cfg!(target_arch = "x86_64") {
-            if let Some(result) = self.try_simd_sampling(logits, config, forbid_token) {
-                self.simd_optimizations.fetch_add(1, Ordering::Relaxed);
-                return Some(result);
-            }
-        }
-
-        // 快速概率估算
-        let mut valid_indices = Vec::new();
-        let mut max_logit = f32::NEG_INFINITY;
-
-        for (i, &logit) in logits.iter().enumerate() {
-            if Some(i) == forbid_token {
-                continue;
-            }
-            valid_indices.push((i, logit));
-            if logit > max_logit {
-                max_logit = logit;
-            }
-        }
-
-        if valid_indices.is_empty() {
-            return Some(0);
-        }
-
-        // 快速softmax近似
-        let inv_temp = 1.0 / config.temperature;
-        let mut total_exp = 0.0;
-        let mut probs = Vec::with_capacity(valid_indices.len());
-
-        for &(_, logit) in &valid_indices {
-            let exp_val = ((logit - max_logit) * inv_temp).exp();
-            probs.push(exp_val);
-            total_exp += exp_val;
-        }
-
-        // 检查是否有高置信度选项
-        let mut max_prob = 0.0;
-        let mut max_prob_idx = 0;
-
-        for (i, &prob) in probs.iter().enumerate() {
-            let normalized_prob = prob / total_exp;
-            if normalized_prob > max_prob {
-                max_prob = normalized_prob;
-                max_prob_idx = i;
-            }
-        }
-
-        // 如果最大概率超过阈值，直接返回
-        if max_prob > config.fast_path_threshold {
-            return Some(valid_indices[max_prob_idx].0);
-        }
-
-        None
-    }
-
-    /// SIMD优化采样（x86_64平台）
-    #[cfg(target_arch = "x86_64")]
-    fn try_simd_sampling(
-        &self,
-        logits: &[f32],
-        config: &SamplingConfig,
-        forbid_token: Option<usize>,
-    ) -> Option<usize> {
-        // 这里可以实现SIMD优化的softmax计算
-        // 由于复杂性，这里提供一个简化版本
-
-        if logits.len() < 8 {
-            return None; // SIMD对小数组效果不明显
-        }
-
-        // 使用标准库的向量化操作进行快速计算
-        let mut max_val = f32::NEG_INFINITY;
-        for &logit in logits {
-            if logit > max_val {
-                max_val = logit;
-            }
-        }
-
-        let inv_temp = 1.0 / config.temperature;
-        let mut exp_sum = 0.0;
-        let mut exp_logits = Vec::with_capacity(logits.len());
-
-        // 向量化exp计算
-        for (i, &logit) in logits.iter().enumerate() {
-            if Some(i) == forbid_token {
-                exp_logits.push(0.0);
-            } else {
-                let exp_val = ((logit - max_val) * inv_temp).exp();
-                exp_logits.push(exp_val);
-                exp_sum += exp_val;
-            }
-        }
-
-        // 检查是否有明显的赢家
-        let mut max_prob = 0.0;
-        let mut max_idx = 0;
-
-        for (i, &exp_val) in exp_logits.iter().enumerate() {
-            let prob = exp_val / exp_sum;
-            if prob > max_prob {
-                max_prob = prob;
-                max_idx = i;
-            }
-        }
-
-        if max_prob > config.fast_path_threshold {
-            Some(max_idx)
-        } else {
-            None
-        }
-    }
-
-    #[cfg(not(target_arch = "x86_64"))]
-    fn try_simd_sampling(
-        &self,
-        _logits: &[f32],
-        _config: &SamplingConfig,
-        _forbid_token: Option<usize>,
-    ) -> Option<usize> {
-        None // 非x86_64平台不支持SIMD优化
-    }
-
-    /// 完整的优化采样（首先尝试快速路径，失败时使用完整采样）
+    /// 优化的采样函数
     pub fn optimized_sample(
         &self,
         logits: &[f32],
@@ -328,225 +51,382 @@ impl FastSampler {
         forbid_token: Option<usize>,
         rng: &mut Option<StdRng>,
     ) -> usize {
-        if logits.is_empty() {
-            return 0;
+        // 快速路径检查：确定性采样
+        if config.use_fast_path && self.should_use_fast_path(logits, config) {
+            return self.fast_path_sample(logits, forbid_token);
         }
 
-        // 首先尝试快速路径
-        if let Some(result) = self.try_fast_path(logits, config, forbid_token) {
-            return result;
+        // 使用内存池避免分配
+        let mut pool_guard = VEC_POOL.lock();
+        let mut probs = pool_guard.get_with_capacity(logits.len());
+
+        // 计算概率分布
+        if config.use_simd {
+            self.compute_probs_simd(logits, config.temperature, &mut probs);
+        } else {
+            self.compute_probs_scalar(logits, config.temperature, &mut probs);
         }
 
-        // 快速路径失败，使用完整采样
-        self.total_samples.fetch_add(1, Ordering::Relaxed);
+        // 应用top-p和top-k
+        self.apply_top_constraints(&mut probs, config.top_p, config.top_k);
 
-        // 构建有效索引列表
-        let mut valid_indices = Vec::new();
-        for (i, _) in logits.iter().enumerate() {
-            if Some(i) != forbid_token {
-                valid_indices.push(i);
+        // 采样
+        let result = self.sample_from_probs(&probs, rng);
+
+        // 返回向量到池中
+        pool_guard.return_vec(probs);
+
+        result
+    }
+
+    /// 检查是否应该使用快速路径
+    fn should_use_fast_path(&self, logits: &[f32], config: &SamplingConfig) -> bool {
+        // 确定性采样条件
+        if config.top_k == 1 || config.top_p < 1e-4 {
+            return true;
+        }
+
+        // 检查是否有明显的主导token
+        if let Some(max_idx) = self.find_max_index(logits) {
+            let max_val = logits[max_idx];
+            let second_max = logits
+                .iter()
+                .enumerate()
+                .filter(|&(i, _)| i != max_idx)
+                .map(|(_, &v)| v)
+                .fold(f32::NEG_INFINITY, f32::max);
+
+            // 如果最大值明显大于次大值，使用快速路径
+            (max_val - second_max) > config.fast_path_threshold
+        } else {
+            false
+        }
+    }
+
+    /// 快速路径采样（直接选择最大值）
+    fn fast_path_sample(&self, logits: &[f32], forbid_token: Option<usize>) -> usize {
+        let mut max_idx = 0;
+        let mut max_val = f32::NEG_INFINITY;
+
+        for (i, &val) in logits.iter().enumerate() {
+            if forbid_token.map_or(true, |ft| i != ft) && val > max_val {
+                max_val = val;
+                max_idx = i;
             }
         }
 
-        if valid_indices.is_empty() {
-            return 0;
+        max_idx
+    }
+
+    /// 使用SIMD计算概率分布
+    #[cfg(target_arch = "x86_64")]
+    fn compute_probs_simd(&self, logits: &[f32], temperature: f32, probs: &mut Vec<f32>) {
+        unsafe {
+            let inv_t = _mm_set1_ps(1.0 / temperature);
+            let mut max_vec = _mm_set1_ps(f32::NEG_INFINITY);
+
+            // 找到最大值
+            let mut i = 0;
+            while i + 4 <= logits.len() {
+                let logits_vec = _mm_loadu_ps(&logits[i]);
+                let scaled_vec = _mm_mul_ps(logits_vec, inv_t);
+                max_vec = _mm_max_ps(max_vec, scaled_vec);
+                i += 4;
+            }
+
+            // 处理剩余元素
+            let mut max_scalar = f32::NEG_INFINITY;
+            for &val in &logits[i..] {
+                let scaled = val / temperature;
+                if scaled > max_scalar {
+                    max_scalar = scaled;
+                }
+            }
+
+            // 合并SIMD和标量最大值
+            let max_vals = [0.0; 4];
+            _mm_storeu_ps(max_vals.as_ptr() as *mut f32, max_vec);
+            let simd_max = max_vals.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+            let max_val = simd_max.max(max_scalar);
+
+            // 计算exp和sum
+            let mut sum_vec = _mm_set1_ps(0.0);
+            i = 0;
+            probs.resize(logits.len(), 0.0);
+
+            while i + 4 <= logits.len() {
+                let logits_vec = _mm_loadu_ps(&logits[i]);
+                let scaled_vec = _mm_mul_ps(logits_vec, inv_t);
+                let centered_vec = _mm_sub_ps(scaled_vec, _mm_set1_ps(max_val));
+                let exp_vec = self.simd_exp(centered_vec);
+
+                _mm_storeu_ps(&mut probs[i], exp_vec);
+                sum_vec = _mm_add_ps(sum_vec, exp_vec);
+                i += 4;
+            }
+
+            // 处理剩余元素并计算总和
+            let mut sum = 0.0;
+            let sum_vals = [0.0; 4];
+            _mm_storeu_ps(sum_vals.as_ptr() as *mut f32, sum_vec);
+            sum += sum_vals.iter().sum::<f32>();
+
+            for j in i..logits.len() {
+                let scaled = logits[j] / temperature;
+                let exp_val = (scaled - max_val).exp();
+                probs[j] = exp_val;
+                sum += exp_val;
+            }
+
+            // 归一化
+            if sum > 0.0 {
+                let inv_sum = _mm_set1_ps(1.0 / sum);
+                i = 0;
+                while i + 4 <= probs.len() {
+                    let prob_vec = _mm_loadu_ps(&probs[i]);
+                    let normalized_vec = _mm_mul_ps(prob_vec, inv_sum);
+                    _mm_storeu_ps(&mut probs[i], normalized_vec);
+                    i += 4;
+                }
+
+                for j in i..probs.len() {
+                    probs[j] /= sum;
+                }
+            }
+        }
+    }
+
+    /// 标量版本的概率计算
+    fn compute_probs_scalar(&self, logits: &[f32], temperature: f32, probs: &mut Vec<f32>) {
+        let inv_t = 1.0 / temperature;
+        let mut max_val = f32::NEG_INFINITY;
+
+        // 找到最大值
+        for &val in logits {
+            let scaled = val * inv_t;
+            if scaled > max_val {
+                max_val = scaled;
+            }
         }
 
-        // 应用top-k过滤
-        let top_k = if config.top_k == 0 || config.top_k > valid_indices.len() {
-            valid_indices.len()
-        } else {
-            config.top_k
-        };
-
-        // 按logits排序
-        valid_indices.sort_by(|&a, &b| {
-            logits[b]
-                .partial_cmp(&logits[a])
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        valid_indices.truncate(top_k);
-
-        // 计算softmax
-        let max_logit = logits[valid_indices[0]];
-        let inv_temp = 1.0 / config.temperature;
-
-        let mut probs = Vec::with_capacity(valid_indices.len());
+        // 计算exp和sum
         let mut sum = 0.0;
+        probs.resize(logits.len(), 0.0);
 
-        for &idx in &valid_indices {
-            let exp_val = ((logits[idx] - max_logit) * inv_temp).exp();
-            probs.push(exp_val);
+        for (i, &val) in logits.iter().enumerate() {
+            let scaled = val * inv_t;
+            let exp_val = (scaled - max_val).exp();
+            probs[i] = exp_val;
             sum += exp_val;
         }
 
         // 归一化
-        for prob in &mut probs {
-            *prob /= sum;
-        }
-
-        // 应用top-p过滤
-        if config.top_p < 1.0 {
-            let mut cumsum = 0.0;
-            let mut cutoff = probs.len();
-
-            for (i, &prob) in probs.iter().enumerate() {
-                cumsum += prob;
-                if cumsum >= config.top_p {
-                    cutoff = i + 1;
-                    break;
-                }
-            }
-
-            if cutoff < probs.len() {
-                probs.truncate(cutoff);
-                valid_indices.truncate(cutoff);
-
-                // 重新归一化
-                let new_sum: f32 = probs.iter().sum();
-                for prob in &mut probs {
-                    *prob /= new_sum;
-                }
+        if sum > 0.0 {
+            for prob in probs.iter_mut() {
+                *prob /= sum;
             }
         }
+    }
 
-        // 采样
-        let r: f32 = if let Some(rng_ref) = rng {
-            rng_ref.gen()
+    /// 应用top-p和top-k约束
+    fn apply_top_constraints(&self, probs: &mut [f32], top_p: f32, top_k: usize) {
+        if top_p < 1.0 {
+            self.apply_top_p(probs, top_p);
+        }
+
+        if top_k > 0 && top_k < probs.len() {
+            self.apply_top_k(probs, top_k);
+        }
+    }
+
+    /// 应用top-p（核采样）
+    fn apply_top_p(&self, probs: &mut [f32], top_p: f32) {
+        // 创建索引并排序
+        let mut indices: Vec<usize> = (0..probs.len()).collect();
+        indices.sort_by(|&a, &b| probs[b].partial_cmp(&probs[a]).unwrap());
+
+        let mut cumulative = 0.0;
+        let mut cutoff = probs.len();
+
+        for (i, &idx) in indices.iter().enumerate() {
+            cumulative += probs[idx];
+            if cumulative >= top_p {
+                cutoff = i + 1;
+                break;
+            }
+        }
+
+        // 将cutoff之后的概率设为0
+        for &idx in &indices[cutoff..] {
+            probs[idx] = 0.0;
+        }
+
+        // 重新归一化
+        let sum: f32 = probs.iter().sum();
+        if sum > 0.0 {
+            for prob in probs.iter_mut() {
+                *prob /= sum;
+            }
+        }
+    }
+
+    /// 应用top-k
+    fn apply_top_k(&self, probs: &mut [f32], top_k: usize) {
+        // 创建索引并排序
+        let mut indices: Vec<usize> = (0..probs.len()).collect();
+        indices.sort_by(|&a, &b| probs[b].partial_cmp(&probs[a]).unwrap());
+
+        // 将top_k之后的概率设为0
+        for &idx in &indices[top_k..] {
+            probs[idx] = 0.0;
+        }
+
+        // 重新归一化
+        let sum: f32 = probs.iter().sum();
+        if sum > 0.0 {
+            for prob in probs.iter_mut() {
+                *prob /= sum;
+            }
+        }
+    }
+
+    /// 从概率分布中采样
+    fn sample_from_probs(&self, probs: &[f32], rng: &mut Option<StdRng>) -> usize {
+        let random_val = if let Some(rng_ref) = rng {
+            rng_ref.gen::<f32>()
         } else {
-            StdRng::from_entropy().gen()
+            StdRng::from_entropy().gen::<f32>()
         };
 
-        let mut cumsum = 0.0;
+        let mut cumulative = 0.0;
         for (i, &prob) in probs.iter().enumerate() {
-            cumsum += prob;
-            if r <= cumsum {
-                return valid_indices[i];
+            cumulative += prob;
+            if random_val <= cumulative {
+                return i;
             }
         }
 
-        valid_indices[valid_indices.len() - 1]
+        probs.len() - 1
     }
 
-    /// 获取统计信息
-    pub fn get_stats(&self) -> FastSamplerStats {
-        FastSamplerStats {
-            total_samples: self.total_samples.load(Ordering::Relaxed),
-            fast_path_hits: self.fast_path_hits.load(Ordering::Relaxed),
-            simd_optimizations: self.simd_optimizations.load(Ordering::Relaxed),
-            deterministic_samples: self.deterministic_samples.load(Ordering::Relaxed),
-            avg_sample_time_ns: 0.0, // 需要额外的时间测量
-        }
+    /// 找到最大值的索引
+    fn find_max_index(&self, logits: &[f32]) -> Option<usize> {
+        logits
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .map(|(idx, _)| idx)
     }
 
-    /// 重置统计信息
-    pub fn reset_stats(&self) {
-        self.total_samples.store(0, Ordering::Relaxed);
-        self.fast_path_hits.store(0, Ordering::Relaxed);
-        self.simd_optimizations.store(0, Ordering::Relaxed);
-        self.deterministic_samples.store(0, Ordering::Relaxed);
-    }
+    /// SIMD exp近似计算
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn simd_exp(&self, x: __m128) -> __m128 {
+        // 使用多项式近似计算exp
+        const A: f32 = 1.0;
+        const B: f32 = 1.0;
+        const C: f32 = 0.5;
+        const D: f32 = 0.1666667;
+        const E: f32 = 0.04166667;
 
-    /// 预热采样器（预计算常用配置）
-    pub fn warm_up(&self) {
-        // 预热快速路径检测
-        let test_logits = vec![1.0, 2.0, 3.0, 1.5, 0.5];
-        let config = SamplingConfig::default();
+        let x2 = _mm_mul_ps(x, x);
+        let x3 = _mm_mul_ps(x2, x);
+        let x4 = _mm_mul_ps(x3, x);
 
-        for _ in 0..10 {
-            self.try_fast_path(&test_logits, &config, None);
-        }
+        let term1 = _mm_set1_ps(A);
+        let term2 = _mm_mul_ps(_mm_set1_ps(B), x);
+        let term3 = _mm_mul_ps(_mm_set1_ps(C), x2);
+        let term4 = _mm_mul_ps(_mm_set1_ps(D), x3);
+        let term5 = _mm_mul_ps(_mm_set1_ps(E), x4);
+
+        let result = _mm_add_ps(term1, term2);
+        let result = _mm_add_ps(result, term3);
+        let result = _mm_add_ps(result, term4);
+        let result = _mm_add_ps(result, term5);
+
+        result
     }
 }
 
-impl Default for FastSampler {
-    fn default() -> Self {
-        Self::new()
+/// 内存池用于避免频繁分配
+struct VecPool<T> {
+    pool: Vec<Vec<T>>,
+    max_size: usize,
+}
+
+impl<T> VecPool<T> {
+    fn new(max_size: usize) -> Self {
+        Self {
+            pool: Vec::new(),
+            max_size,
+        }
+    }
+
+    fn get_with_capacity(&mut self, capacity: usize) -> Vec<T> {
+        if let Some(mut vec) = self.pool.pop() {
+            vec.clear();
+            vec.reserve(capacity);
+            vec
+        } else {
+            Vec::with_capacity(capacity)
+        }
+    }
+
+    fn return_vec(&mut self, vec: Vec<T>) {
+        if self.pool.len() < self.max_size {
+            self.pool.push(vec);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
 
     #[test]
-    fn test_deterministic_sampling() {
+    fn test_fast_path_detection() {
         let sampler = FastSampler::new();
-        let logits = vec![1.0, 3.0, 2.0, 0.5];
+        let config = SamplingConfig::default();
 
-        let result = sampler.deterministic_sample(&logits, None);
-        assert_eq!(result, 1); // 最大值在索引1
+        // 测试明显主导的情况
+        let mut logits = vec![-1.0; 100];
+        logits[50] = 10.0; // 明显的主导token
 
-        let result_with_forbid = sampler.deterministic_sample(&logits, Some(1));
-        assert_eq!(result_with_forbid, 2); // 禁止索引1后，最大值在索引2
+        assert!(sampler.should_use_fast_path(&logits, &config));
+
+        // 测试平局的情况
+        let logits = vec![1.0; 100];
+        assert!(!sampler.should_use_fast_path(&logits, &config));
     }
 
     #[test]
     fn test_fast_path_sampling() {
         let sampler = FastSampler::new();
-        let config = SamplingConfig {
-            temperature: 0.001, // 极低温度，应该触发确定性采样
-            ..Default::default()
-        };
 
-        let logits = vec![1.0, 3.0, 2.0, 0.5];
-        let result = sampler.try_fast_path(&logits, &config, None);
+        let mut logits = vec![-1.0; 100];
+        logits[42] = 5.0;
 
-        assert!(result.is_some());
-        assert_eq!(result.unwrap(), 1);
+        let result = sampler.fast_path_sample(&logits, None);
+        assert_eq!(result, 42);
 
-        let stats = sampler.get_stats();
-        assert_eq!(stats.fast_path_hits, 1);
-        assert_eq!(stats.deterministic_samples, 1);
+        // 测试禁止token
+        let result = sampler.fast_path_sample(&logits, Some(42));
+        assert_ne!(result, 42);
     }
 
     #[test]
-    fn test_single_peak_detection() {
+    fn test_sampling_consistency() {
         let sampler = FastSampler::new();
         let config = SamplingConfig::default();
+        let logits = vec![1.0, 2.0, 3.0, 4.0, 5.0];
 
-        // 明显的单峰分布
-        let logits = vec![1.0, 10.0, 2.0, 1.5];
-        let result = sampler.try_single_peak_sampling(&logits, &config, None);
+        let mut rng = Some(StdRng::seed_from_u64(12345));
+        let result1 = sampler.optimized_sample(&logits, &config, None, &mut rng);
 
-        assert!(result.is_some());
-        assert_eq!(result.unwrap(), 1);
-    }
+        let mut rng = Some(StdRng::seed_from_u64(12345));
+        let result2 = sampler.optimized_sample(&logits, &config, None, &mut rng);
 
-    #[test]
-    fn test_optimized_sample() {
-        let sampler = FastSampler::new();
-        let config = SamplingConfig {
-            temperature: 1.0,
-            top_k: 3,
-            top_p: 0.9,
-            ..Default::default()
-        };
-
-        let logits = vec![1.0, 3.0, 2.0, 0.5, 2.5];
-        let mut rng = Some(StdRng::seed_from_u64(42));
-
-        let result = sampler.optimized_sample(&logits, &config, None, &mut rng);
-        assert!(result < logits.len());
-    }
-
-    #[test]
-    fn test_stats_tracking() {
-        let sampler = FastSampler::new();
-        let config = SamplingConfig::default();
-        let logits = vec![1.0, 2.0, 3.0];
-
-        // 执行几次采样
-        for _ in 0..5 {
-            sampler.try_fast_path(&logits, &config, None);
-        }
-
-        let stats = sampler.get_stats();
-        assert_eq!(stats.total_samples, 5);
-        assert!(stats.fast_path_hit_rate() >= 0.0);
-
-        sampler.reset_stats();
-        let reset_stats = sampler.get_stats();
-        assert_eq!(reset_stats.total_samples, 0);
+        assert_eq!(result1, result2);
     }
 }

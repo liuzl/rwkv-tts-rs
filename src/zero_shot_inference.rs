@@ -6,20 +6,30 @@ use web_rwkv::runtime::infer::{RnnInput, RnnInputBatch, RnnOption};
 
 use crate::shared_runtime::TtsInferContext;
 
-/// 执行Zero-shot推理（复制普通模式结构但跳过Global tokens生成）
+/// 执行Zero-shot推理
 pub async fn execute_zero_shot_inference(
-    infer_context: &TtsInferContext,
-    request: crate::rwkv_sampler::TtsBatchRequest,
+    infer_context: TtsInferContext,
     text_tokens: Vec<i32>,
-    rng: Option<rand::rngs::StdRng>,
+    property_tokens: Vec<i32>,
+    rng: rand::rngs::StdRng,
+    request: &crate::rwkv_sampler::TtsBatchRequest,
 ) -> Result<(Vec<i32>, Vec<i32>)> {
     let request_id = &infer_context.request_id;
     // 开始Zero-shot推理
 
+    // Acquire runtime semaphore for the entire inference to ensure isolation
+    let _runtime_permit = infer_context
+        .runtime_semaphore
+        .acquire()
+        .await
+        .map_err(|e| anyhow::anyhow!("无法获取运行时信号量: {}", e))?;
+
+    // 已获取信号量许可，开始推理
+
     // 获取runtime
     let runtime = &infer_context.runtime;
     let state = &infer_context.state;
-    let token_chunk_size = request.args.token_chunk_size;
+    let token_chunk_size = infer_context.options.token_chunk_size;
 
     // === 验证和读取预提取的音色特征 ===
     let ref_global = request
@@ -44,9 +54,9 @@ pub async fn execute_zero_shot_inference(
         warn!("🔧 [{}] 已修正semantic tokens范围到[0..8192]", request_id);
     }
 
-    // === 构建输入序列（包含预读取的semantic_tokens）===
-    // 构建输入序列：属性tokens + TTS_TAG_2 + 文本tokens + TTS_TAG_0 + global_tokens + TTS_TAG_1 + semantic_tokens
+    // 构建输入序列：属性tokens + TTS_TAG_2 + 文本tokens + TTS_TAG_0
     let mut input_tokens: Vec<i32> = Vec::new();
+    input_tokens.extend_from_slice(&property_tokens);
     input_tokens.push(crate::rwkv_sampler::TTS_TAG_2);
     input_tokens.extend_from_slice(&text_tokens);
     input_tokens.push(crate::rwkv_sampler::TTS_TAG_0);
@@ -112,44 +122,42 @@ pub async fn execute_zero_shot_inference(
     };
 
     // === Semantic tokens 生成阶段（复制普通模式参数和逻辑）===
-    let semantic_limit: usize = usize::min(request.args.max_tokens, 2048);
-    let mut args_semantic = request.args.clone();
+    let semantic_limit: usize = usize::min(2048, 2048);
 
-    // Semantic阶段使用固定参数，与Python代码保持严格一致
-    args_semantic.temperature = 1.0;
-    args_semantic.top_p = 0.95;
-    args_semantic.top_k = 80;
+    // Zero-shot模式：跳过Global阶段，直接使用预提取的global_tokens
+    // 设置Semantic阶段采样参数
+    let args_semantic = crate::rwkv_sampler::SamplerArgs {
+        temperature: 1.0, // Semantic阶段使用固定参数
+        top_p: 0.95,
+        top_k: 80,
+        seed: infer_context.options.seed,
+        max_tokens: 2048,
+        voice_fidelity: infer_context.options.voice_fidelity,
+        layered_randomness: infer_context.options.layered_randomness.clone(),
+        token_chunk_size: infer_context.options.token_chunk_size,
+    };
 
     // 开始生成semantic tokens
     // Semantic阶段采样参数: temperature=1.0, top_p=0.95, top_k=80 (固定参数，与Python一致)
 
+    // 简化采样，移除优化组件
+
     // 创建独立的RNG用于semantic阶段
-    // 声音克隆场景也支持随机采样，根据seed参数决定采样方式
-    let mut semantic_rng = if let Some(rng_instance) = rng {
-        if request.args.layered_randomness.use_independent_seeds {
-            if let Some(seed) = request.args.seed {
-                // 用户提供了seed，使用确定性采样
-                Some(StdRng::seed_from_u64(seed.wrapping_add(
-                    request.args.layered_randomness.semantic_seed_offset,
-                )))
-            } else {
-                // 没有seed，使用传入的RNG
-                Some(rng_instance)
-            }
+    let semantic_rng = if args_semantic.layered_randomness.use_independent_seeds {
+        if let Some(seed) = args_semantic.seed {
+            // 用户提供了seed，使用确定性采样
+            StdRng::seed_from_u64(
+                seed.wrapping_add(args_semantic.layered_randomness.semantic_seed_offset),
+            )
         } else {
-            Some(rng_instance)
+            // 用户没有提供seed，使用随机采样
+            StdRng::from_rng(rand::thread_rng()).expect("failed to seed StdRng")
         }
     } else {
-        // 即使rng为None，也创建新的RNG用于随机采样（除非用户明确指定seed）
-        if let Some(seed) = request.args.seed {
-            Some(StdRng::seed_from_u64(seed.wrapping_add(
-                request.args.layered_randomness.semantic_seed_offset,
-            )))
-        } else {
-            Some(StdRng::from_entropy())
-        }
+        rng
     };
 
+    let mut semantic_rng_opt = Some(semantic_rng);
     for i in 0..semantic_limit {
         let logits: Vec<f32> = if i == 0 {
             last_sem_logits.clone()
@@ -183,12 +191,12 @@ pub async fn execute_zero_shot_inference(
             }
         }
 
-        // 直接使用屏蔽后的logits进行采样
-        let next_id = crate::rwkv_sampler::sample_logits(
+        // 使用基本采样
+        let next_id = crate::rwkv_sampler::sample_logits_impl(
             &logits_masked,
             &args_semantic,
-            None,
-            &mut semantic_rng,
+            None, // forbid_token
+            &mut semantic_rng_opt,
         );
 
         // 检查是否遇到EOS token（必须在范围检查之前）

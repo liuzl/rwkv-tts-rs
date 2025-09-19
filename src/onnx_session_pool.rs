@@ -31,9 +31,9 @@ impl OnnxSessionPool {
             .map(|n| n.get())
             .unwrap_or(4); // 默认4核
 
-        // 设置合理的线程数：inter_threads控制并行操作数，intra_threads控制单个操作内的并行度
-        let inter_threads = std::cmp::min(cpu_cores / 2, 4); // 最多4个inter线程
-        let intra_threads = std::cmp::max(cpu_cores / 4, 2); // 至少2个intra线程
+        // 优化线程配置：根据CPU核心数动态调整，最大化CPU利用率
+        let inter_threads = std::cmp::min(cpu_cores, 8); // 最多8个inter线程
+        let intra_threads = std::cmp::max(cpu_cores / 2, 4); // 至少4个intra线程，最多使用一半核心
 
         for _ in 0..pool_size {
             let mut builder =
@@ -99,6 +99,65 @@ impl OnnxSessionPool {
             index,
             _permit: permit,
         })
+    }
+
+    /// 批量获取会话（减少锁竞争，提高并发性能）
+    pub async fn acquire_sessions_batch(&self, count: usize) -> Result<Vec<SessionGuard>> {
+        if count > self.pool_size {
+            return Err(anyhow::anyhow!(
+                "请求的会话数量 {} 超过池大小 {}",
+                count,
+                self.pool_size
+            ));
+        }
+
+        let mut sessions = Vec::with_capacity(count);
+        let mut permits = Vec::with_capacity(count);
+
+        // 批量获取许可
+        for _ in 0..count {
+            let permit = self
+                .inner
+                .semaphore
+                .clone()
+                .acquire_owned()
+                .await
+                .map_err(|e| anyhow::anyhow!("获取会话许可失败: {}", e))?;
+            permits.push(permit);
+        }
+
+        // 批量获取会话索引（单次锁操作）
+        let mut indices = Vec::with_capacity(count);
+        {
+            let mut stack = self
+                .inner
+                .free_indices
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Poisoned mutex in OnnxSessionPool"))?;
+
+            if stack.len() < count {
+                return Err(anyhow::anyhow!(
+                    "可用会话不足: 需要 {} 个，但只有 {} 个可用",
+                    count,
+                    stack.len()
+                ));
+            }
+
+            for _ in 0..count {
+                indices.push(stack.pop().unwrap());
+            }
+        }
+
+        // 创建会话守卫
+        for index in indices {
+            sessions.push(SessionGuard {
+                inner: self.inner.clone(),
+                index,
+                _permit: permits.pop().unwrap(),
+            });
+        }
+
+        Ok(sessions)
     }
 
     /// 获取池大小
@@ -182,6 +241,31 @@ impl ConcurrentOnnxManager {
     /// 获取BiCodec Detokenize会话
     pub async fn acquire_bicodec_detokenize_session(&self) -> Result<SessionGuard> {
         self.bicodec_detokenize_pool.acquire_session().await
+    }
+
+    /// 批量获取BiCodec Tokenize会话
+    pub async fn acquire_bicodec_tokenize_sessions_batch(
+        &self,
+        count: usize,
+    ) -> Result<Vec<SessionGuard>> {
+        self.bicodec_tokenize_pool
+            .acquire_sessions_batch(count)
+            .await
+    }
+
+    /// 批量获取Wav2Vec2会话
+    pub async fn acquire_wav2vec2_sessions_batch(&self, count: usize) -> Result<Vec<SessionGuard>> {
+        self.wav2vec2_pool.acquire_sessions_batch(count).await
+    }
+
+    /// 批量获取BiCodec Detokenize会话
+    pub async fn acquire_bicodec_detokenize_sessions_batch(
+        &self,
+        count: usize,
+    ) -> Result<Vec<SessionGuard>> {
+        self.bicodec_detokenize_pool
+            .acquire_sessions_batch(count)
+            .await
     }
 
     /// 获取池统计信息

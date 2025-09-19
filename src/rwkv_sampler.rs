@@ -25,12 +25,8 @@ use web_rwkv::{
 };
 
 // Import optimization components
-use crate::fast_sampler::{FastSampler, SamplingConfig};
 use crate::inference_state_manager::{InferenceStateConfig, InferenceStateManager};
-use crate::logits_cache::{LogitsCache, LogitsCacheConfig};
-use crate::performance_monitor::{MonitorConfig, PerformanceMonitor};
 use crate::streaming_inference::{BatchConfig, StreamingInference};
-use crate::vec_pool::{global_vec_pools, VecPool};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -41,12 +37,24 @@ pub fn sample_logits(
     forbid_token: Option<usize>,
     rng: &mut Option<StdRng>,
 ) -> usize {
-    // 直接实现采样逻辑，避免创建完整的RwkvSampler实例
-    sample_logits_impl(logits, args, forbid_token, rng)
+    // 使用高性能采样器
+    use crate::fast_sampler::{FastSampler, SamplingConfig};
+
+    let sampler = FastSampler::new();
+    let config = SamplingConfig {
+        temperature: args.temperature,
+        top_p: args.top_p,
+        top_k: args.top_k,
+        use_fast_path: true,
+        fast_path_threshold: 0.7,
+        use_simd: true,
+    };
+
+    sampler.optimized_sample(logits, &config, forbid_token, rng)
 }
 
 /// 采样逻辑的具体实现 - 修复以匹配Python行为
-fn sample_logits_impl(
+pub fn sample_logits_impl(
     logits: &[f32],
     args: &SamplerArgs,
     forbid_token: Option<usize>,
@@ -248,13 +256,7 @@ pub struct RwkvSampler {
     batch_counter: AtomicUsize,
     // Token chunk size配置
     token_chunk_size: usize,
-    // Performance optimization components
-    fast_sampler: FastSampler,
-    performance_monitor: Arc<PerformanceMonitor>,
-    // Advanced optimization components
-    #[allow(dead_code)]
-    logits_cache: LogitsCache,
-    vec_pool: Arc<VecPool<f32>>,
+    // Optimization components
     #[allow(dead_code)]
     streaming_inference: Option<Arc<StreamingInference>>,
     inference_state_manager: Arc<InferenceStateManager>,
@@ -415,29 +417,6 @@ impl RwkvSampler {
         let vocab_content = std::fs::read_to_string(vocab_path)?;
         let tokenizer = Tokenizer::new(&vocab_content)?;
 
-        // Initialize optimization components
-        let _sampling_config = SamplingConfig {
-            temperature: 1.0,
-            top_p: 0.85,
-            top_k: 0,
-            use_fast_path: true,
-            fast_path_threshold: 0.9,
-            use_simd: cfg!(target_arch = "x86_64"),
-        };
-        let fast_sampler = FastSampler::new();
-        let performance_monitor = Arc::new(PerformanceMonitor::new(MonitorConfig::default()));
-
-        // Initialize advanced optimization components
-        let cache_config = LogitsCacheConfig {
-            max_entries: 1000,
-            max_age: std::time::Duration::from_secs(300),
-            enable_prefetch: true,
-            prefetch_window: 10,
-            hit_rate_threshold: 0.8,
-        };
-        let logits_cache = LogitsCache::new(cache_config.clone());
-        let vec_pool = Arc::new(VecPool::<f32>::new(100));
-
         // Initialize inference state manager
         let inference_state_config = InferenceStateConfig {
             max_cache_entries: 200,
@@ -447,12 +426,9 @@ impl RwkvSampler {
             enable_async_pre_inference: true,
             state_similarity_threshold: 0.95,
         };
-        let inference_state_manager = Arc::new(InferenceStateManager::new(
-            inference_state_config,
-            Some(performance_monitor.clone()),
-        ));
+        let inference_state_manager = Arc::new(InferenceStateManager::new(inference_state_config));
 
-        // Initialize StreamingInference with separate cache instance
+        // Initialize StreamingInference
         let batch_config = BatchConfig {
             max_batch_size: 8,
             batch_timeout: Duration::from_millis(50),
@@ -460,8 +436,7 @@ impl RwkvSampler {
             min_batch_size: 2,
             prefetch_window: 4,
         };
-        let streaming_cache = Arc::new(LogitsCache::new(cache_config));
-        let streaming_inference = Arc::new(StreamingInference::new(batch_config, streaming_cache));
+        let streaming_inference = Arc::new(StreamingInference::new(batch_config));
 
         Ok(Self {
             runtime,
@@ -469,10 +444,6 @@ impl RwkvSampler {
             rng: None,
             batch_counter: AtomicUsize::new(0),
             token_chunk_size,
-            fast_sampler,
-            performance_monitor,
-            logits_cache,
-            vec_pool,
             streaming_inference: Some(streaming_inference),
             inference_state_manager,
         })
@@ -544,16 +515,6 @@ impl RwkvSampler {
     /// 只读访问内部tokenizer（用于外部按相同方式编码属性）
     pub fn tokenizer(&self) -> &Tokenizer {
         &self.tokenizer
-    }
-
-    /// 获取性能统计信息
-    pub fn get_performance_stats(&self) -> String {
-        self.performance_monitor.generate_report()
-    }
-
-    /// 重置性能统计
-    pub fn reset_performance_stats(&self) {
-        self.performance_monitor.reset();
     }
 
     /// 生成文本（示例）
@@ -844,8 +805,12 @@ impl RwkvSampler {
                 4096
             };
             // Global阶段采样
-            let next_id =
-                sample_logits(&logits[..vocab_global], &args_global, None, &mut global_rng);
+            let next_id = self.sample_logits_with_rng(
+                &logits[..vocab_global],
+                &args_global,
+                None,
+                &mut global_rng,
+            );
 
             // 追加到global输出（相对域 [0..4095]）
             global_tokens.push(next_id as i32);
@@ -943,8 +908,12 @@ impl RwkvSampler {
                 }
             }
 
-            let next_id =
-                sample_logits(&logits_buf[..copy_len], &args_sem, None, &mut semantic_rng);
+            let next_id = self.sample_logits_with_rng(
+                &logits_buf[..copy_len],
+                &args_sem,
+                None,
+                &mut semantic_rng,
+            );
 
             // 追加到semantic输出（原始域 [0..8191]）
             semantic_tokens.push(next_id as i32);
@@ -1054,54 +1023,13 @@ impl RwkvSampler {
         forbid_token: Option<usize>,
         rng: &mut Option<StdRng>,
     ) -> usize {
-        // Start performance monitoring
-        let start_time = std::time::Instant::now();
-
-        // 生成缓存键，基于采样参数和logits内容
-        let cache_key = self.generate_cache_key(logits, args, forbid_token);
-
-        // 检查缓存是否命中
-        if let Some(cached_logits) = self.logits_cache.get(&cache_key) {
-            // 缓存命中，直接使用缓存的logits进行采样
-            self.performance_monitor.record_cache_hit();
-            let result =
-                self.sample_from_cached_logits(&cached_logits, args, forbid_token, rng, start_time);
-            return result;
-        }
-
-        // 缓存未命中，记录统计信息
-        self.performance_monitor.record_cache_miss();
-
-        // Try fast path first
-        let sampling_config = SamplingConfig {
-            temperature: args.temperature,
-            top_p: args.top_p,
-            top_k: args.top_k,
-            use_fast_path: true,
-            fast_path_threshold: 0.9,
-            use_simd: cfg!(target_arch = "x86_64"),
-        };
-
-        if let Some(result) =
-            self.fast_sampler
-                .try_fast_path(logits, &sampling_config, forbid_token)
-        {
-            self.performance_monitor.record_cache_hit();
-            self.performance_monitor
-                .record_sampling_latency(start_time.elapsed());
-            return result;
-        }
-
-        // Fall back to optimized full path
-        // 记录完整路径回退
-        self.performance_monitor.record_error();
         let vocab_size = logits.len();
         if vocab_size == 0 {
             return 0;
         }
 
-        // Use VecPool for optimized memory allocation
-        let mut indices = global_vec_pools().get_usize_vec(vocab_size);
+        // 构建候选token索引
+        let mut indices = Vec::with_capacity(vocab_size);
         if let Some(ft) = forbid_token {
             for i in 0..vocab_size {
                 if i != ft {
@@ -1123,7 +1051,7 @@ impl RwkvSampler {
         };
         let top_p = args.top_p.clamp(0.0, 1.0);
 
-        // 快速路径：top_k==1或top_p极小，直接取最大logit（确定性采样）
+        // 快速路径：确定性采样
         if top_k == 1 || top_p < 1e-4 {
             let mut best = indices[0];
             let mut best_val = f32::NEG_INFINITY;
@@ -1137,7 +1065,7 @@ impl RwkvSampler {
             return best;
         }
 
-        // 按logits降序排序（与softmax排序一致）
+        // 按logits降序排序
         indices.sort_by(|&a, &b| {
             logits[b]
                 .partial_cmp(&logits[a])
@@ -1147,14 +1075,12 @@ impl RwkvSampler {
             indices.truncate(top_k);
         }
 
-        // 数值稳定的 softmax：减去最大值并clamp指数区间
+        // 数值稳定的softmax
         let inv_t = 1.0 / temperature;
-
-        // Use VecPool for probs allocation
-        let mut probs = self.vec_pool.get();
+        let mut probs = Vec::with_capacity(indices.len());
         let mut max_scaled = f32::NEG_INFINITY;
 
-        // 第一遍：计算缩放值并找到最大值
+        // 计算缩放值并找到最大值
         for &i in &indices {
             let scaled = logits[i] * inv_t;
             if scaled > max_scaled {
@@ -1163,185 +1089,7 @@ impl RwkvSampler {
             probs.push(scaled);
         }
 
-        // 第二遍：原地计算exp并减去最大值
-        for p in &mut probs {
-            *p = ((*p - max_scaled).clamp(-80.0, 80.0)).exp();
-        }
-        let mut sum: f32 = probs.iter().sum();
-        if sum > 0.0 && sum.is_finite() {
-            for p in &mut probs {
-                *p /= sum;
-            }
-        } else {
-            // 退化为均匀分布（极端数值情况下）
-            let uniform = 1.0 / (probs.len() as f32).max(1.0);
-            probs.fill(uniform);
-        }
-
-        // top-p截断（在排序后概率空间中）
-        if top_p < 1.0 {
-            let mut cumsum = 0.0;
-            let mut cutoff = probs.len();
-            for (i, &p) in probs.iter().enumerate() {
-                cumsum += p;
-                if cumsum >= top_p {
-                    cutoff = i + 1;
-                    break;
-                }
-            }
-            if cutoff < probs.len() {
-                probs.truncate(cutoff);
-                indices.truncate(cutoff);
-            }
-            // 再归一化
-            sum = probs.iter().sum();
-            if sum > 0.0 && sum.is_finite() {
-                for p in &mut probs {
-                    *p /= sum;
-                }
-            }
-        }
-
-        // 按概率采样（支持确定性RNG）
-        let r: f32 = if let Some(rng_ref) = rng {
-            rng_ref.gen()
-        } else {
-            // 如果没有RNG，创建临时RNG进行随机采样
-            StdRng::from_entropy().gen()
-        };
-        let mut cumsum = 0.0;
-        for (i, &p) in probs.iter().enumerate() {
-            cumsum += p;
-            if r <= cumsum {
-                let result = indices[i];
-                self.performance_monitor
-                    .record_sampling_latency(start_time.elapsed());
-                return result;
-            }
-        }
-        let result = *indices.last().unwrap_or(&0);
-
-        // 将采样结果存入缓存
-        self.logits_cache.insert(cache_key, logits.to_vec());
-
-        // Record sampling time
-        self.performance_monitor
-            .record_sampling_latency(start_time.elapsed());
-
-        result
-    }
-
-    /// 生成缓存键，基于采样参数和logits内容
-    fn generate_cache_key(
-        &self,
-        logits: &[f32],
-        args: &SamplerArgs,
-        forbid_token: Option<usize>,
-    ) -> crate::logits_cache::CacheKey {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-
-        // 对采样参数进行哈希
-        args.temperature.to_bits().hash(&mut hasher);
-        args.top_p.to_bits().hash(&mut hasher);
-        args.top_k.hash(&mut hasher);
-        forbid_token.hash(&mut hasher);
-
-        // 对logits内容进行采样哈希（避免完整哈希的性能开销）
-        let step = (logits.len() / 32).max(1);
-        for (i, &logit) in logits.iter().enumerate().step_by(step) {
-            logit.to_bits().hash(&mut hasher);
-            i.hash(&mut hasher);
-        }
-
-        let logits_hash = hasher.finish();
-
-        crate::logits_cache::CacheKey {
-            token_sequence_hash: logits_hash,
-            context_length: logits.len(),
-            state_hash: None,
-        }
-    }
-
-    /// 从缓存的logits进行采样
-    fn sample_from_cached_logits(
-        &self,
-        cached_logits: &[f32],
-        args: &SamplerArgs,
-        forbid_token: Option<usize>,
-        rng: &mut Option<StdRng>,
-        start_time: std::time::Instant,
-    ) -> usize {
-        // 使用与正常采样相同的逻辑，但跳过logits计算
-        let vocab_size = cached_logits.len();
-        if vocab_size == 0 {
-            return 0;
-        }
-
-        // Use VecPool for optimized memory allocation
-        let mut indices = global_vec_pools().get_usize_vec(vocab_size);
-        if let Some(ft) = forbid_token {
-            for i in 0..vocab_size {
-                if i != ft {
-                    indices.push(i);
-                }
-            }
-        } else {
-            indices.extend(0..vocab_size);
-        }
-        if indices.is_empty() {
-            return 0;
-        }
-
-        let temperature = args.temperature.max(0.1);
-        let top_k = if args.top_k == 0 || args.top_k > indices.len() {
-            indices.len()
-        } else {
-            args.top_k
-        };
-        let top_p = args.top_p.clamp(0.0, 1.0);
-
-        // 快速路径：top_k==1或top_p极小，直接取最大logit（确定性采样）
-        if top_k == 1 || top_p < 1e-4 {
-            let mut best = indices[0];
-            let mut best_val = f32::NEG_INFINITY;
-            for &i in &indices {
-                let v = cached_logits[i];
-                if v > best_val {
-                    best_val = v;
-                    best = i;
-                }
-            }
-            self.performance_monitor
-                .record_sampling_latency(start_time.elapsed());
-            return best;
-        }
-
-        // 按logits降序排序
-        indices.sort_by(|&a, &b| {
-            cached_logits[b]
-                .partial_cmp(&cached_logits[a])
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        if top_k < indices.len() {
-            indices.truncate(top_k);
-        }
-
-        // 数值稳定的 softmax
-        let inv_t = 1.0 / temperature;
-        let mut probs = self.vec_pool.get();
-        let mut max_scaled = f32::NEG_INFINITY;
-
-        for &i in &indices {
-            let scaled = cached_logits[i] * inv_t;
-            if scaled > max_scaled {
-                max_scaled = scaled;
-            }
-            probs.push(scaled);
-        }
-
+        // 计算exp并归一化
         for p in &mut probs {
             *p = ((*p - max_scaled).clamp(-80.0, 80.0)).exp();
         }
@@ -1370,6 +1118,7 @@ impl RwkvSampler {
                 probs.truncate(cutoff);
                 indices.truncate(cutoff);
             }
+            // 重新归一化
             sum = probs.iter().sum();
             if sum > 0.0 && sum.is_finite() {
                 for p in &mut probs {
@@ -1388,16 +1137,9 @@ impl RwkvSampler {
         for (i, &p) in probs.iter().enumerate() {
             cumsum += p;
             if r <= cumsum {
-                let result = indices[i];
-                self.performance_monitor
-                    .record_sampling_latency(start_time.elapsed());
-                return result;
+                return indices[i];
             }
         }
-
-        let result = *indices.last().unwrap_or(&0);
-        self.performance_monitor
-            .record_sampling_latency(start_time.elapsed());
-        result
+        *indices.last().unwrap_or(&0)
     }
 }

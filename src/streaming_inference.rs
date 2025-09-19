@@ -9,9 +9,6 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::timeout;
 
-use crate::logits_cache::{CacheKey, LogitsCache};
-use crate::vec_pool::global_vec_pools;
-
 /// 推理请求
 #[derive(Debug, Clone)]
 pub struct InferenceRequest {
@@ -52,11 +49,6 @@ impl InferenceRequest {
     pub fn with_cache(mut self, cache_result: bool) -> Self {
         self.cache_result = cache_result;
         self
-    }
-
-    /// 生成缓存键
-    pub fn cache_key(&self) -> CacheKey {
-        CacheKey::from_tokens(&self.tokens, self.context_length)
     }
 }
 
@@ -149,8 +141,7 @@ struct InferenceTask {
 pub struct StreamingInference {
     /// 配置
     config: BatchConfig,
-    /// LogitsCache实例
-    cache: Arc<LogitsCache>,
+
     /// 请求队列
     request_queue: Arc<Mutex<VecDeque<InferenceTask>>>,
     /// 优先级队列
@@ -162,17 +153,16 @@ pub struct StreamingInference {
     /// 活跃批处理数
     active_batches: Arc<AtomicUsize>,
     /// 预取队列
-    prefetch_queue: Arc<Mutex<VecDeque<CacheKey>>>,
+    prefetch_queue: Arc<Mutex<VecDeque<String>>>,
     /// 任务发送器
     task_tx: Option<mpsc::UnboundedSender<InferenceTask>>,
 }
 
 impl StreamingInference {
     /// 创建新的StreamingInference
-    pub fn new(config: BatchConfig, cache: Arc<LogitsCache>) -> Self {
+    pub fn new(config: BatchConfig) -> Self {
         Self {
             config,
-            cache,
             request_queue: Arc::new(Mutex::new(VecDeque::new())),
             priority_queues: Arc::new(Mutex::new(HashMap::new())),
             stats: Arc::new(RwLock::new(StreamingStats::default())),
@@ -196,9 +186,6 @@ impl StreamingInference {
 
         // 启动批处理调度器
         let _scheduler_handle = self.start_batch_scheduler().await;
-
-        // 启动预取器
-        let _prefetch_handle = self.start_prefetcher().await;
 
         // 启动任务处理器
         let _processor_handle = {
@@ -246,22 +233,6 @@ impl StreamingInference {
             return Err("StreamingInference is not running".into());
         }
 
-        // 检查缓存
-        let cache_key = request.cache_key();
-        if let Some(cached_logits) = self.cache.get(&cache_key) {
-            let mut stats = self.stats.write().unwrap();
-            stats.total_requests += 1;
-            stats.cache_hits += 1;
-
-            return Ok(InferenceResult {
-                request_id: request.id.clone(),
-                logits: cached_logits,
-                inference_time: Duration::from_nanos(0),
-                from_cache: true,
-                completed_at: Instant::now(),
-            });
-        }
-
         // 创建响应通道
         let (response_tx, response_rx) = oneshot::channel();
 
@@ -296,7 +267,6 @@ impl StreamingInference {
     /// 启动批处理调度器
     async fn start_batch_scheduler(&self) -> tokio::task::JoinHandle<()> {
         let priority_queues = Arc::clone(&self.priority_queues);
-        let cache = Arc::clone(&self.cache);
         let stats = Arc::clone(&self.stats);
         let is_running = Arc::clone(&self.is_running);
         let active_batches = Arc::clone(&self.active_batches);
@@ -315,12 +285,11 @@ impl StreamingInference {
                     active_batches.fetch_add(1, Ordering::Relaxed);
 
                     // 处理批处理
-                    let cache_clone = Arc::clone(&cache);
                     let stats_clone = Arc::clone(&stats);
                     let active_batches_clone = Arc::clone(&active_batches);
 
                     tokio::spawn(async move {
-                        Self::process_batch(batch, cache_clone, stats_clone).await;
+                        Self::process_batch(batch, stats_clone).await;
                         active_batches_clone.fetch_sub(1, Ordering::Relaxed);
                     });
                 }
@@ -359,11 +328,7 @@ impl StreamingInference {
     }
 
     /// 处理批处理
-    async fn process_batch(
-        batch: Vec<InferenceTask>,
-        cache: Arc<LogitsCache>,
-        stats: Arc<RwLock<StreamingStats>>,
-    ) {
+    async fn process_batch(batch: Vec<InferenceTask>, stats: Arc<RwLock<StreamingStats>>) {
         let batch_start = Instant::now();
         let batch_size = batch.len();
 
@@ -376,18 +341,12 @@ impl StreamingInference {
 
             // 生成模拟logits
             let vocab_size = 50257; // 示例词汇表大小
-            let mut logits = global_vec_pools().get_f32_vec(vocab_size);
+            let mut logits = Vec::with_capacity(vocab_size);
             for _i in 0..vocab_size {
                 logits.push(rand::random::<f32>());
             }
 
             let inference_time = inference_start.elapsed();
-
-            // 缓存结果
-            if task.request.cache_result {
-                let cache_key = task.request.cache_key();
-                cache.insert(cache_key, logits.clone());
-            }
 
             // 发送结果
             let result = InferenceResult {
@@ -413,51 +372,6 @@ impl StreamingInference {
             stats.avg_inference_time_ms =
                 (stats.avg_inference_time_ms * (stats.total_batches - 1) as f32 + batch_time_ms)
                     / stats.total_batches as f32;
-        }
-    }
-
-    /// 启动预取器
-    async fn start_prefetcher(&self) -> tokio::task::JoinHandle<()> {
-        let cache = Arc::clone(&self.cache);
-        let prefetch_queue = Arc::clone(&self.prefetch_queue);
-        let is_running = Arc::clone(&self.is_running);
-        let config = self.config.clone();
-
-        tokio::spawn(async move {
-            let mut prefetch_timer = tokio::time::interval(Duration::from_millis(100));
-
-            while is_running.load(Ordering::Relaxed) {
-                prefetch_timer.tick().await;
-
-                // 处理预取队列
-                if let Ok(mut queue) = prefetch_queue.lock() {
-                    let mut processed = 0;
-                    while processed < config.prefetch_window && !queue.is_empty() {
-                        if let Some(cache_key) = queue.pop_front() {
-                            // 检查是否已缓存
-                            if cache.get(&cache_key).is_none() {
-                                // 这里应该触发实际的预取推理
-                                // 为了演示，我们跳过实际推理
-                            }
-                            processed += 1;
-                        }
-                    }
-                }
-            }
-        })
-    }
-
-    /// 添加预取请求
-    pub fn schedule_prefetch(&self, cache_key: CacheKey) {
-        if let Ok(mut queue) = self.prefetch_queue.lock() {
-            if !queue.iter().any(|k| k == &cache_key) {
-                queue.push_back(cache_key);
-
-                // 限制预取队列大小
-                if queue.len() > self.config.prefetch_window * 2 {
-                    queue.pop_front();
-                }
-            }
         }
     }
 
@@ -503,13 +417,11 @@ impl StreamingInference {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::logits_cache::LogitsCacheConfig;
 
     #[tokio::test]
     async fn test_streaming_inference_basic() {
-        let cache = Arc::new(LogitsCache::new(LogitsCacheConfig::default()));
         let config = BatchConfig::default();
-        let mut streaming = StreamingInference::new(config, cache);
+        let mut streaming = StreamingInference::new(config);
 
         streaming.start().await.unwrap();
 
@@ -517,33 +429,6 @@ mod tests {
 
         let result = streaming.submit_request(request).await;
         assert!(result.is_ok());
-
-        streaming.stop().await;
-    }
-
-    #[tokio::test]
-    async fn test_cache_integration() {
-        let cache = Arc::new(LogitsCache::new(LogitsCacheConfig::default()));
-        let config = BatchConfig::default();
-        let mut streaming = StreamingInference::new(config, cache);
-
-        streaming.start().await.unwrap();
-
-        let request1 = InferenceRequest::new("test_1".to_string(), vec![1, 2, 3], 5);
-
-        let request2 = InferenceRequest::new(
-            "test_2".to_string(),
-            vec![1, 2, 3], // 相同的token序列
-            5,
-        );
-
-        // 第一次请求
-        let result1 = streaming.submit_request(request1).await.unwrap();
-        assert!(!result1.from_cache);
-
-        // 第二次请求应该命中缓存
-        let result2 = streaming.submit_request(request2).await.unwrap();
-        assert!(result2.from_cache);
 
         streaming.stop().await;
     }

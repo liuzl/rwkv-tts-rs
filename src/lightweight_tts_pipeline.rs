@@ -547,6 +547,87 @@ impl LightweightTtsPipeline {
         Ok(audio)
     }
 
+    /// 批量解码音频（CPU优化：减少会话获取开销）
+    async fn decode_audio_batch(
+        &self,
+        batch_requests: &[(Vec<i32>, Vec<i32>)],
+    ) -> Result<Vec<Vec<f32>>> {
+        let onnx_manager = get_global_onnx_manager()?;
+        let batch_size = batch_requests.len();
+        let mut results = Vec::with_capacity(batch_size);
+
+        // 批量获取会话，减少锁竞争
+        let session_guards = onnx_manager
+            .acquire_bicodec_detokenize_sessions_batch(batch_size)
+            .await?;
+
+        // 并行执行解码（使用CPU多核心）
+        let mut tasks = Vec::with_capacity(batch_size);
+        for ((global_tokens, semantic_tokens), session_guard) in
+            batch_requests.iter().zip(session_guards.into_iter())
+        {
+            let global_tokens_clone = global_tokens.clone();
+            let semantic_tokens_clone = semantic_tokens.clone();
+            let mut session_guard_clone = session_guard;
+
+            let task = tokio::task::spawn_blocking(move || {
+                // 在阻塞线程中执行CPU密集型操作
+                let global_shape: Vec<i64> =
+                    [1i64, 1i64, global_tokens_clone.len() as i64].to_vec();
+                let global_vec_i64: Vec<i64> =
+                    global_tokens_clone.iter().map(|&x| x as i64).collect();
+                let global_tensor = match Value::from_array((global_shape, global_vec_i64)) {
+                    Ok(tensor) => tensor,
+                    Err(e) => {
+                        eprintln!("创建全局tensor失败: {}", e);
+                        return vec![];
+                    }
+                };
+
+                let semantic_shape: Vec<i64> = [1i64, semantic_tokens_clone.len() as i64].to_vec();
+                let semantic_vec_i64: Vec<i64> =
+                    semantic_tokens_clone.iter().map(|&x| x as i64).collect();
+                let semantic_tensor = match Value::from_array((semantic_shape, semantic_vec_i64)) {
+                    Ok(tensor) => tensor,
+                    Err(e) => {
+                        eprintln!("创建语义tensor失败: {}", e);
+                        return vec![];
+                    }
+                };
+
+                let outputs = match session_guard_clone.session_mut().run(ort::inputs![
+                    "semantic_tokens" => SessionInputValue::from(semantic_tensor),
+                    "global_tokens" => SessionInputValue::from(global_tensor)
+                ]) {
+                    Ok(outputs) => outputs,
+                    Err(e) => {
+                        eprintln!("ONNX推理失败: {}", e);
+                        return vec![];
+                    }
+                };
+
+                match outputs[0].try_extract_tensor::<f32>() {
+                    Ok((_shape, audio_slice)) => audio_slice.to_vec(),
+                    Err(e) => {
+                        eprintln!("提取音频tensor失败: {}", e);
+                        vec![]
+                    }
+                }
+            });
+            tasks.push(task);
+        }
+
+        // 等待所有任务完成
+        for task in tasks {
+            let audio_result = task
+                .await
+                .map_err(|e| anyhow::anyhow!("批处理解码任务失败: {}", e))?;
+            results.push(audio_result);
+        }
+
+        Ok(results)
+    }
+
     /// 使用ONNX会话进行音频解码
     async fn detokenize_audio_with_session(
         &self,
@@ -578,10 +659,17 @@ impl LightweightTtsPipeline {
     pub async fn generate_speech(&self, args: &LightweightTtsPipelineArgs) -> Result<Vec<f32>> {
         let total_start = std::time::Instant::now();
 
-        #[cfg(debug_assertions)]
-        {
-            // 开始轻量级TTS生成流程
-            // 文本和Zero-shot模式处理
+        // 性能监控结构
+        #[derive(Debug)]
+        struct PerformanceMetrics {
+            text_processing_time: std::time::Duration,
+            reference_processing_time: std::time::Duration,
+            inference_time: std::time::Duration,
+            audio_decoding_time: std::time::Duration,
+            total_time: std::time::Duration,
+            global_tokens_count: usize,
+            semantic_tokens_count: usize,
+            audio_samples_count: usize,
         }
 
         // 1. 处理文本
@@ -591,11 +679,7 @@ impl LightweightTtsPipeline {
         } else {
             self.process_text(&args.text)
         };
-        let _text_time = text_start.elapsed();
-        #[cfg(debug_assertions)]
-        {
-            // 文本处理耗时统计
-        }
+        let text_processing_time = text_start.elapsed();
 
         // 2. 处理属性tokens或参考音频
         let ref_start = std::time::Instant::now();
@@ -606,17 +690,9 @@ impl LightweightTtsPipeline {
                 let voice_manager = VoiceFeatureManager::new("./raf")?;
                 match voice_manager.get_voice_tokens(voice_id).await {
                     Ok((global_tokens, semantic_tokens)) => {
-                        #[cfg(debug_assertions)]
-                        {
-                            // 从缓存获取音色特征tokens成功
-                        }
                         (vec![], Some(global_tokens), Some(semantic_tokens))
                     }
                     Err(_) => {
-                        #[cfg(debug_assertions)]
-                        {
-                            // 从缓存获取音色特征tokens失败，回退到其他方式
-                        }
                         // 回退到直接传入的tokens或其他方式
                         if let (Some(global_tokens), Some(semantic_tokens)) = (&args.voice_global_tokens, &args.voice_semantic_tokens) {
                             (vec![], Some(global_tokens.clone()), Some(semantic_tokens.clone()))
@@ -632,19 +708,11 @@ impl LightweightTtsPipeline {
             }
             // 优先使用直接传入的音色特征tokens
             else if let (Some(global_tokens), Some(semantic_tokens)) = (&args.voice_global_tokens, &args.voice_semantic_tokens) {
-                #[cfg(debug_assertions)]
-                {
-                    // 使用直接传入的音色特征tokens
-                }
                 (vec![], Some(global_tokens.clone()), Some(semantic_tokens.clone()))
             } else if args.zero_shot {
                 // 在zero-shot模式下，优化为一次性获取所有需要的信息
                 // 直接使用传入的音色特征tokens（如果提供了的话）
                 if let (Some(global_tokens), Some(semantic_tokens)) = (&args.voice_global_tokens, &args.voice_semantic_tokens) {
-                    #[cfg(debug_assertions)]
-                    {
-                        // 使用传入的音色特征tokens
-                    }
                     (vec![], Some(global_tokens.clone()), Some(semantic_tokens.clone()))
                 } else {
                     // 处理参考音频文件
@@ -655,17 +723,7 @@ impl LightweightTtsPipeline {
                 let tokens = self.generate_property_tokens(args);
                 (tokens, None, None)
             };
-        let _ref_time = ref_start.elapsed();
-        #[cfg(debug_assertions)]
-        {
-            if args.voice_global_tokens.is_some() && args.voice_semantic_tokens.is_some() {
-                // 音色特征tokens处理耗时统计
-            } else if args.zero_shot {
-                // 参考音频处理耗时统计
-            } else {
-                // 属性tokens生成耗时统计
-            }
-        }
+        let reference_processing_time = ref_start.elapsed();
 
         // 3. 创建采样参数
         let sampler_args = SamplerArgs {
@@ -702,50 +760,154 @@ impl LightweightTtsPipeline {
                 request.args,
             )
             .await?;
-        let _inference_time = inference_start.elapsed();
-        #[cfg(debug_assertions)]
-        {
-            // RWKV模型推理耗时统计
-            // RWKV模型推理结果: global_tokens和semantic_tokens数量
-        }
+        let inference_time = inference_start.elapsed();
 
         // 6. 解码音频
         if global_tokens.is_empty() && semantic_tokens.is_empty() {
-            #[cfg(debug_assertions)]
-            {
-                // 未生成任何TTS tokens，返回静音占位
-            }
             return Ok(vec![0.0; 16000]);
         }
 
         let decode_start = std::time::Instant::now();
         let audio = self.decode_audio(&global_tokens, &semantic_tokens).await?;
-        let _decode_time = decode_start.elapsed();
-        #[cfg(debug_assertions)]
-        {
-            // 音频解码耗时统计
-        }
+        let audio_decoding_time = decode_start.elapsed();
 
         let total_time = total_start.elapsed();
         let audio_duration = audio.len() as f64 / 16000.0; // 假设16kHz采样率
         let _rtf = total_time.as_secs_f64() / audio_duration;
 
-        #[cfg(debug_assertions)]
-        {
-            // 总耗时统计
-        }
+        // 输出详细的耗时统计
+        println!("⏱️  TTS生成详细耗时统计:");
+        println!("  文本处理耗时: {:.2}ms", text_processing_time.as_millis());
+        println!(
+            "  参考音频处理耗时: {:.2}ms",
+            reference_processing_time.as_millis()
+        );
+        println!("  RWKV推理耗时: {:.2}ms", inference_time.as_millis());
+        println!("  音频解码耗时: {:.2}ms", audio_decoding_time.as_millis());
+        println!("  总耗时: {:.2}ms", total_time.as_millis());
 
-        // 性能优化建议
-        #[cfg(debug_assertions)]
-        {
-            // 性能优化建议
-        }
-
-        #[cfg(debug_assertions)]
-        {
-            // 轻量级TTS生成完成，音频长度统计
-        }
         Ok(audio)
+    }
+
+    /// 批量生成语音（CPU优化：支持批处理推理和音频解码）
+    pub async fn generate_speech_batch(
+        &self,
+        batch_args: Vec<LightweightTtsPipelineArgs>,
+    ) -> Result<Vec<Vec<f32>>> {
+        let total_start = std::time::Instant::now();
+        let batch_size = batch_args.len();
+
+        // 1. 处理所有请求的文本和参考音频
+        let mut batch_requests = Vec::with_capacity(batch_size);
+        let mut processed_texts = Vec::with_capacity(batch_size);
+        let mut ref_processing_results = Vec::with_capacity(batch_size);
+
+        for args in &batch_args {
+            // 处理文本
+            let processed_text = if args.zero_shot {
+                self.process_text_zero_shot(&args.text, &args.prompt_text)
+            } else {
+                self.process_text(&args.text)
+            };
+            processed_texts.push(processed_text);
+
+            // 处理参考音频或属性tokens
+            let ref_result = if let Some(voice_id) = &args.voice_id {
+                let voice_manager = VoiceFeatureManager::new("./raf")?;
+                match voice_manager.get_voice_tokens(voice_id).await {
+                    Ok((global_tokens, semantic_tokens)) => {
+                        (vec![], Some(global_tokens), Some(semantic_tokens))
+                    }
+                    Err(_) => {
+                        if let (Some(global_tokens), Some(semantic_tokens)) =
+                            (&args.voice_global_tokens, &args.voice_semantic_tokens)
+                        {
+                            (
+                                vec![],
+                                Some(global_tokens.clone()),
+                                Some(semantic_tokens.clone()),
+                            )
+                        } else if args.zero_shot {
+                            let (global, semantic) =
+                                self.process_reference_audio(&args.ref_audio_path).await?;
+                            (vec![], Some(global), Some(semantic))
+                        } else {
+                            let tokens = self.generate_property_tokens(args);
+                            (tokens, None, None)
+                        }
+                    }
+                }
+            } else if let (Some(global_tokens), Some(semantic_tokens)) =
+                (&args.voice_global_tokens, &args.voice_semantic_tokens)
+            {
+                (
+                    vec![],
+                    Some(global_tokens.clone()),
+                    Some(semantic_tokens.clone()),
+                )
+            } else if args.zero_shot {
+                if let (Some(global_tokens), Some(semantic_tokens)) =
+                    (&args.voice_global_tokens, &args.voice_semantic_tokens)
+                {
+                    (
+                        vec![],
+                        Some(global_tokens.clone()),
+                        Some(semantic_tokens.clone()),
+                    )
+                } else {
+                    let (global, semantic) =
+                        self.process_reference_audio(&args.ref_audio_path).await?;
+                    (vec![], Some(global), Some(semantic))
+                }
+            } else {
+                let tokens = self.generate_property_tokens(args);
+                (tokens, None, None)
+            };
+            ref_processing_results.push(ref_result);
+        }
+
+        // 2. 创建批处理请求
+        for (i, args) in batch_args.iter().enumerate() {
+            let (property_tokens, ref_global_tokens, ref_semantic_tokens) =
+                &ref_processing_results[i];
+
+            let sampler_args = SamplerArgs {
+                temperature: args.temperature,
+                top_p: args.top_p,
+                top_k: args.top_k,
+                max_tokens: args.max_tokens,
+                seed: args.seed,
+                voice_fidelity: 0.8,
+                layered_randomness: crate::rwkv_sampler::LayeredRandomnessConfig::default(),
+                token_chunk_size: 512,
+            };
+
+            let request = TtsBatchRequest {
+                text: processed_texts[i].clone(),
+                property_tokens: property_tokens.clone(),
+                ref_global_tokens: ref_global_tokens.clone(),
+                ref_semantic_tokens: ref_semantic_tokens.clone(),
+                args: sampler_args,
+                voice_id: args.voice_id.clone(),
+            };
+            batch_requests.push(request);
+        }
+
+        // 3. 批量执行RWKV推理
+        let manager = get_global_dynamic_batch_manager()?;
+        let inference_results = manager.generate_tts_batch(batch_requests).await?;
+
+        // 4. 批量解码音频
+        let audio_results = self.decode_audio_batch(&inference_results).await?;
+
+        let total_time = total_start.elapsed();
+        println!(
+            "⏱️  批量TTS生成完成: {}个请求, 总耗时: {:.2}ms",
+            batch_size,
+            total_time.as_millis()
+        );
+
+        Ok(audio_results)
     }
 
     /// 保存音频到文件（支持WAV和MP3格式）
