@@ -99,9 +99,8 @@ pub fn sample_logits_with_top_p_k(
         indexed_probs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // 保留top-k，其余设为0
-        for i in top_k..indexed_probs.len() {
-            let (idx, _) = indexed_probs[i];
-            probs[idx] = 0.0;
+        for (idx, _) in indexed_probs.iter().skip(top_k) {
+            probs[*idx] = 0.0;
         }
     }
 
@@ -128,9 +127,9 @@ pub fn sample_logits_with_top_p_k(
 
         if let Some(_cutoff_idx) = cutoff_index {
             // 将小于cutoff的概率设为0
-            for i in 0..probs.len() {
-                if probs[i] < cutoff_prob {
-                    probs[i] = 0.0;
+            for prob in probs.iter_mut() {
+                if *prob < cutoff_prob {
+                    *prob = 0.0;
                 }
             }
 
@@ -142,9 +141,9 @@ pub fn sample_logits_with_top_p_k(
                     let cutoff_count = probs.iter().filter(|&&p| p == cutoff_prob).count();
                     if cutoff_count > 0 {
                         let adjustment = remaining / cutoff_count as f32;
-                        for i in 0..probs.len() {
-                            if probs[i] == cutoff_prob {
-                                probs[i] = cutoff_prob + adjustment;
+                        for prob in probs.iter_mut() {
+                            if *prob == cutoff_prob {
+                                *prob = cutoff_prob + adjustment;
                             }
                         }
                     }
@@ -801,7 +800,7 @@ impl RwkvSampler {
         } else {
             log::info!("   - 模式: 正常生成 (随机采样)");
         }
-        for i in 0..global_tokens_size {
+        for (i, _) in (0..global_tokens_size).enumerate() {
             // 关键修复：确保第一个token使用Prefill阶段的正确logits
             let logits: &[f32] = if i == 0 {
                 // 第一个token必须使用Prefill阶段的logits
@@ -883,7 +882,7 @@ impl RwkvSampler {
         } else {
             log::info!("   - 模式: 正常生成 (随机采样)");
         }
-        for i in 0..semantic_limit {
+        for (i, _) in (0..semantic_limit).enumerate() {
             // 取得当前语义阶段的logits：首步使用注入标签后的logits，其后每步从runtime获取
             let logits: &[f32] = if i == 0 {
                 &last_sem_logits

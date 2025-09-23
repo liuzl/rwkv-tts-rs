@@ -87,8 +87,8 @@ mod tests {
         assert_eq!(args.emotion, "NEUTRAL");
         assert_eq!(args.pitch, "medium");
         assert_eq!(args.speed, "medium");
-        assert_eq!(args.zero_shot, false);
-        assert_eq!(args.validate, false);
+        assert!(!args.zero_shot);
+        assert!(!args.validate);
         assert_eq!(args.seed, None);
         assert_eq!(args.voice_id, None);
         assert_eq!(args.voice_global_tokens, None);
