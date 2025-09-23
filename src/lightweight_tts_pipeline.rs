@@ -12,11 +12,14 @@ use anyhow::Result;
 use ndarray::{Array1, Array2};
 use ort::{session::SessionInputValue, value::Value};
 use std::path::Path;
+use tracing;
 
 /// 轻量级TTS流水线参数
 #[derive(Debug, Clone)]
 pub struct LightweightTtsPipelineArgs {
     pub text: String,
+    pub prompt_text: String,
+    pub ref_audio_path: String,
     pub temperature: f32,
     pub top_p: f32,
     pub top_k: usize,
@@ -24,12 +27,9 @@ pub struct LightweightTtsPipelineArgs {
     pub age: String,
     pub gender: String,
     pub emotion: String,
-    pub pitch: f32,
-    pub speed: f32,
+    pub pitch: String,
+    pub speed: String,
     pub zero_shot: bool,
-    pub ref_audio_path: String,
-    pub prompt_text: String,
-    pub output_path: String,
     pub validate: bool,
     pub seed: Option<u64>,
     // 新增：voice_id用于从缓存获取tokens
@@ -43,6 +43,8 @@ impl Default for LightweightTtsPipelineArgs {
     fn default() -> Self {
         Self {
             text: String::new(),
+            prompt_text: String::new(),
+            ref_audio_path: String::new(),
             temperature: 1.0,
             top_p: 0.90,
             top_k: 0,
@@ -50,18 +52,85 @@ impl Default for LightweightTtsPipelineArgs {
             age: "youth-adult".to_string(),
             gender: "female".to_string(),
             emotion: "NEUTRAL".to_string(),
-            pitch: 200.0,
-            speed: 4.2,
+            pitch: "medium".to_string(),
+            speed: "medium".to_string(),
             zero_shot: false,
-            ref_audio_path: String::new(),
-            prompt_text: String::new(),
-            output_path: String::from("./output"),
             validate: false,
             seed: None,
             voice_id: None,
             voice_global_tokens: None,
             voice_semantic_tokens: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pipeline_args_default() {
+        let args = LightweightTtsPipelineArgs::default();
+
+        // 测试新添加的字段
+        assert_eq!(args.prompt_text, "");
+        assert_eq!(args.ref_audio_path, "");
+
+        // 测试其他基本字段
+        assert_eq!(args.text, "");
+        assert_eq!(args.temperature, 1.0);
+        assert_eq!(args.top_p, 0.90);
+        assert_eq!(args.top_k, 0);
+        assert_eq!(args.max_tokens, 8000);
+        assert_eq!(args.age, "youth-adult");
+        assert_eq!(args.gender, "female");
+        assert_eq!(args.emotion, "NEUTRAL");
+        assert_eq!(args.pitch, "medium");
+        assert_eq!(args.speed, "medium");
+        assert_eq!(args.zero_shot, false);
+        assert_eq!(args.validate, false);
+        assert_eq!(args.seed, None);
+        assert_eq!(args.voice_id, None);
+        assert_eq!(args.voice_global_tokens, None);
+        assert_eq!(args.voice_semantic_tokens, None);
+    }
+
+    #[test]
+    fn test_pipeline_args_custom() {
+        let args = LightweightTtsPipelineArgs {
+            prompt_text: "这是提示文本".to_string(),
+            ref_audio_path: "/path/to/audio.wav".to_string(),
+            text: "这是要合成的文本".to_string(),
+            zero_shot: true,
+            ..Default::default()
+        };
+
+        // 验证字段设置正确
+        assert_eq!(args.prompt_text, "这是提示文本");
+        assert_eq!(args.ref_audio_path, "/path/to/audio.wav");
+        assert_eq!(args.text, "这是要合成的文本");
+        assert!(args.zero_shot);
+    }
+
+    #[test]
+    fn test_pipeline_args_clone() {
+        let args = LightweightTtsPipelineArgs {
+            prompt_text: "测试克隆".to_string(),
+            ref_audio_path: "/test/path.wav".to_string(),
+            ..Default::default()
+        };
+
+        let cloned_args = args.clone();
+
+        assert_eq!(args.prompt_text, cloned_args.prompt_text);
+        assert_eq!(args.ref_audio_path, cloned_args.ref_audio_path);
+    }
+
+    #[test]
+    fn test_process_text_zero_shot() {
+        let pipeline = LightweightTtsPipeline::new();
+        let result = pipeline.process_text_zero_shot("用户文本", "提示文本");
+        assert_eq!(result, "提示文本用户文本");
     }
 }
 
@@ -98,23 +167,31 @@ impl LightweightTtsPipeline {
         if (args.voice_global_tokens.is_some() && args.voice_semantic_tokens.is_some())
             || args.zero_shot
         {
+            tracing::info!("🎭 使用预提取音色特征或zero_shot模式，跳过传统属性参数");
             vec![] // 使用预提取音色特征或zero_shot模式时，传统属性参数不起作用
         } else {
-            // 对speed和pitch进行分类转换
-            let speed_class = properties_util::classify_speed(args.speed);
-            // 将字符串年龄转换为数值用于音高分类
-            let age_for_pitch = properties_util::age_string_to_number(&args.age);
-            let pitch_class =
-                properties_util::classify_pitch(args.pitch, &args.gender, age_for_pitch);
+            // 添加调试日志，打印传入的参数
+            tracing::info!(
+                "🎵 生成属性tokens - age: {}, gender: {}, emotion: {}, pitch: {}, speed: {}",
+                args.age,
+                args.gender,
+                args.emotion,
+                args.pitch,
+                args.speed
+            );
 
-            // 直接使用字符串年龄调用convert_standard_properties_to_tokens
-            properties_util::convert_standard_properties_to_tokens(
-                &speed_class,
-                &pitch_class,
-                &args.age, // 直接传递字符串年龄
-                &args.gender,
-                &args.emotion,
-            )
+            // 直接使用传入的pitch和speed字符串，无需分类转换
+            // 注意：函数定义的参数顺序是(age, gender, emotion, pitch, speed) - 与Python/C++版本一致
+            let tokens = properties_util::convert_standard_properties_to_tokens(
+                &args.age,     // age - 直接传递字符串年龄
+                &args.gender,  // gender
+                &args.emotion, // emotion
+                &args.pitch,   // pitch - 直接传递字符串
+                &args.speed,   // speed - 直接传递字符串
+            );
+
+            tracing::info!("🎯 生成的属性tokens: {:?}", tokens);
+            tokens
         }
     }
 
@@ -659,19 +736,6 @@ impl LightweightTtsPipeline {
     pub async fn generate_speech(&self, args: &LightweightTtsPipelineArgs) -> Result<Vec<f32>> {
         let total_start = std::time::Instant::now();
 
-        // 性能监控结构
-        #[derive(Debug)]
-        struct PerformanceMetrics {
-            text_processing_time: std::time::Duration,
-            reference_processing_time: std::time::Duration,
-            inference_time: std::time::Duration,
-            audio_decoding_time: std::time::Duration,
-            total_time: std::time::Duration,
-            global_tokens_count: usize,
-            semantic_tokens_count: usize,
-            audio_samples_count: usize,
-        }
-
         // 1. 处理文本
         let text_start = std::time::Instant::now();
         let processed_text = if args.zero_shot {
@@ -721,6 +785,7 @@ impl LightweightTtsPipeline {
                 }
             } else {
                 let tokens = self.generate_property_tokens(args);
+                println!("generate_property_tokens: {:?}", tokens);
                 (tokens, None, None)
             };
         let reference_processing_time = ref_start.elapsed();

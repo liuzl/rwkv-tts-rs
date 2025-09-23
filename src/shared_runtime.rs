@@ -85,7 +85,7 @@ impl SharedRwkvRuntime {
         let model_file_path = if Path::new(&model_path).is_dir() {
             // 如果是目录，优先尝试SafeTensors格式
             let safetensors_path = Path::new(&model_path).join("rwkvtts-Int8_22.safetensors");
-            let prefab_path = Path::new(&model_path).join("rwkvtts-Int8_22.prefab");
+            let prefab_path = Path::new(&model_path).join("webrwkv.safetensors");
             if safetensors_path.exists() {
                 safetensors_path
             } else if prefab_path.exists() {

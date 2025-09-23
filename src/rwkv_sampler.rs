@@ -31,134 +31,187 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// 公开的采样函数，支持传入RNG参数
+/// 匹配Python原版sampler_simple_batch的行为：温度应用在logits上，支持噪声
 pub fn sample_logits(
     logits: &[f32],
     args: &SamplerArgs,
     forbid_token: Option<usize>,
     rng: &mut Option<StdRng>,
 ) -> usize {
-    // 使用高性能采样器
-    use crate::fast_sampler::{FastSampler, SamplingConfig};
-
-    let sampler = FastSampler::new();
-    let config = SamplingConfig {
-        temperature: args.temperature,
-        top_p: args.top_p,
-        top_k: args.top_k,
-        use_fast_path: true,
-        fast_path_threshold: 0.7,
-        use_simd: true,
-    };
-
-    sampler.optimized_sample(logits, &config, forbid_token, rng)
+    // 实现与Python版本一致的sample_logits逻辑
+    sample_logits_with_top_p_k(
+        logits,
+        args.temperature,
+        args.top_p,
+        args.top_k,
+        forbid_token,
+        rng,
+    )
 }
 
-/// 采样逻辑的具体实现 - 修复以匹配Python行为
-pub fn sample_logits_impl(
+/// 实现与Python版本一致的sample_logits函数
+/// 支持temperature、top_p、top_k采样
+/// 按照Python版本的顺序：softmax -> top_k -> top_p -> temperature -> multinomial
+pub fn sample_logits_with_top_p_k(
     logits: &[f32],
-    args: &SamplerArgs,
+    temperature: f32,
+    top_p: f32,
+    top_k: usize,
     forbid_token: Option<usize>,
     rng: &mut Option<StdRng>,
 ) -> usize {
-    // 使用栈分配的数组避免堆分配，对于小数组更高效
-    let mut logits_buf: Vec<f32>;
-    let logits_slice = if let Some(token) = forbid_token {
-        if token < logits.len() {
-            logits_buf = Vec::with_capacity(logits.len());
-            logits_buf.extend_from_slice(logits);
-            logits_buf[token] = f32::NEG_INFINITY;
-            &logits_buf[..]
-        } else {
-            logits
-        }
-    } else {
-        logits
-    };
+    let vocab_size = logits.len();
+    if vocab_size == 0 {
+        return 0;
+    }
 
-    // 先计算softmax概率（与Python一致）
-    let max_logit = logits_slice
+    // 创建可修改的logits副本
+    let mut modified_logits = logits.to_vec();
+
+    // 处理禁止token
+    if let Some(ft) = forbid_token {
+        if ft < vocab_size {
+            modified_logits[ft] = f32::NEG_INFINITY;
+        }
+    }
+
+    // 步骤1: 计算softmax概率（匹配Python版本：probs = F.softmax(logits.float(), dim=-1)）
+    let max_logit = modified_logits
         .iter()
         .fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-    let mut probs: Vec<f32> = logits_slice
+    let mut probs: Vec<f32> = modified_logits
         .iter()
-        .map(|&x| (x - max_logit).exp())
+        .map(|&logit| (logit - max_logit).exp())
         .collect();
+
     let sum: f32 = probs.iter().sum();
     if sum > 0.0 {
-        for p in &mut probs {
-            *p /= sum;
+        for prob in probs.iter_mut() {
+            *prob /= sum;
         }
     }
 
-    // 应用top_p（与Python顺序一致：先top_p）
-    if args.top_p < 1.0 {
-        let mut sorted_indices: Vec<usize> = (0..probs.len()).collect();
-        sorted_indices.sort_by(|&a, &b| probs[b].partial_cmp(&probs[a]).unwrap());
+    // 步骤2: Top-k截断（匹配Python版本：probs[sorted_ids[top_k:]] = 0）
+    if top_k > 0 && top_k < vocab_size {
+        // 创建索引-概率对并排序
+        let mut indexed_probs: Vec<(usize, f32)> =
+            probs.iter().enumerate().map(|(i, &p)| (i, p)).collect();
+        indexed_probs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        let mut cumulative_prob = 0.0;
-        let mut cutoff_index = probs.len();
-        for (i, &idx) in sorted_indices.iter().enumerate() {
-            cumulative_prob += probs[idx];
-            if cumulative_prob >= args.top_p {
-                cutoff_index = i + 1;
-                break;
-            }
-        }
-
-        for (i, &idx) in sorted_indices.iter().enumerate() {
-            if i >= cutoff_index {
-                probs[idx] = 0.0;
-            }
-        }
-    }
-
-    // 应用top_k（与Python顺序一致：后top_k）
-    if args.top_k > 0 && args.top_k < probs.len() {
-        let mut sorted_indices: Vec<usize> = (0..probs.len()).collect();
-        sorted_indices.sort_by(|&a, &b| probs[b].partial_cmp(&probs[a]).unwrap());
-
-        // 将top_k之外的概率设为0
-        for &idx in &sorted_indices[args.top_k..] {
+        // 保留top-k，其余设为0
+        for i in top_k..indexed_probs.len() {
+            let (idx, _) = indexed_probs[i];
             probs[idx] = 0.0;
         }
     }
 
-    // 应用温度（与Python一致：在概率上应用）
-    if args.temperature > 0.0 && args.temperature != 1.0 {
-        for p in &mut probs {
-            if *p > 0.0 {
-                *p = p.powf(1.0 / args.temperature);
+    // 步骤3: Top-p截断（匹配Python版本的复杂逻辑）
+    if top_p < 1.0 {
+        // 创建索引-概率对并排序
+        let mut indexed_probs: Vec<(usize, f32)> =
+            probs.iter().enumerate().map(|(i, &p)| (i, p)).collect();
+        indexed_probs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // 计算累积概率
+        let mut cumulative_prob = 0.0;
+        let mut cutoff_index = None;
+        let mut cutoff_prob = 0.0;
+
+        for (i, (_, prob)) in indexed_probs.iter().enumerate() {
+            cumulative_prob += prob;
+            if cumulative_prob >= top_p {
+                cutoff_index = Some(i);
+                cutoff_prob = *prob;
+                break;
+            }
+        }
+
+        if let Some(_cutoff_idx) = cutoff_index {
+            // 将小于cutoff的概率设为0
+            for i in 0..probs.len() {
+                if probs[i] < cutoff_prob {
+                    probs[i] = 0.0;
+                }
+            }
+
+            // 处理等于cutoff的概率（匹配Python版本的精确逻辑）
+            if top_p > 0.0 {
+                let current_sum: f32 = probs.iter().sum();
+                if current_sum < top_p {
+                    let remaining = top_p - current_sum;
+                    let cutoff_count = probs.iter().filter(|&&p| p == cutoff_prob).count();
+                    if cutoff_count > 0 {
+                        let adjustment = remaining / cutoff_count as f32;
+                        for i in 0..probs.len() {
+                            if probs[i] == cutoff_prob {
+                                probs[i] = cutoff_prob + adjustment;
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 
-    // 重新归一化概率
-    let sum: f32 = probs.iter().sum();
-    if sum > 0.0 {
-        for p in &mut probs {
-            *p /= sum;
+    // 步骤4: 应用温度（匹配Python版本：probs = probs ** (1.0 / temperature)）
+    if temperature != 1.0 && temperature > 0.0 {
+        let temp_inv = 1.0 / temperature;
+        for prob in probs.iter_mut() {
+            if *prob > 0.0 {
+                *prob = prob.powf(temp_inv);
+            }
+        }
+
+        // 重新归一化
+        let sum: f32 = probs.iter().sum();
+        if sum > 0.0 {
+            for prob in probs.iter_mut() {
+                *prob /= sum;
+            }
         }
     }
 
-    // 采样 - 支持确定性采样
-    let random_value = if let Some(ref mut rng_ref) = rng {
-        rng_ref.gen::<f32>()
+    // 步骤5: 多项式采样（匹配Python版本：torch.multinomial(probs, num_samples=1).item()）
+    if let Some(rng_ref) = rng {
+        // 使用传入的RNG
+        let rand_val: f32 = rng_ref.gen();
+        let mut cumulative = 0.0;
+        for (i, &prob) in probs.iter().enumerate() {
+            cumulative += prob;
+            if rand_val <= cumulative {
+                return i;
+            }
+        }
+        // 如果没有找到，返回最后一个非零概率的索引
+        for (i, &prob) in probs.iter().enumerate().rev() {
+            if prob > 0.0 {
+                return i;
+            }
+        }
     } else {
-        // 当没有RNG时（如声音克隆场景），使用确定性采样：选择概率最高的token
-        0.0 // 这将选择第一个（概率最高的）token
-    };
-
-    let mut cumulative = 0.0;
-    for (i, &prob) in probs.iter().enumerate() {
-        cumulative += prob;
-        if random_value <= cumulative {
-            return i;
+        // 没有RNG时使用确定性种子
+        let mut temp_rng = StdRng::seed_from_u64(42);
+        let rand_val: f32 = temp_rng.gen();
+        let mut cumulative = 0.0;
+        for (i, &prob) in probs.iter().enumerate() {
+            cumulative += prob;
+            if rand_val <= cumulative {
+                return i;
+            }
+        }
+        // 如果没有找到，返回最后一个非零概率的索引
+        for (i, &prob) in probs.iter().enumerate().rev() {
+            if prob > 0.0 {
+                return i;
+            }
         }
     }
 
-    // 如果没有找到合适的token，返回最后一个有效token
-    probs.len() - 1
+    // 最后的回退
+    0
 }
+
+// 已删除有问题的sample_logits_impl函数，统一使用FastSampler版本的sample_logits
 
 /// 加载类型枚举
 enum LoadType {
@@ -226,7 +279,7 @@ impl Default for SamplerArgs {
     fn default() -> Self {
         Self {
             temperature: 1.0,
-            top_p: 0.85,
+            top_p: 0.85, // 修复：与Python版本sample_logits函数默认值一致
             top_k: 0,
             max_tokens: 2048, // 修复：提高默认值以支持更长的音频生成
             seed: None,
@@ -295,10 +348,10 @@ impl RwkvSampler {
         }
 
         // 解析模型文件路径：
-        // - 若传入目录，则优先查找 "rwkvtts-Int8_22.prefab"，其次 "rwkvtts-Int8_22.safetensors"
+        // - 若传入目录，则优先查找 "webrwkv.safetensors"，其次 "rwkvtts-Int8_22.safetensors"
         // - 若传入文件，则直接使用该文件
         let model_file_path = if model_path_ref.is_dir() {
-            let prefab_path = model_path_ref.join("rwkvtts-Int8_22.prefab");
+            let prefab_path = model_path_ref.join("webrwkv.safetensors");
             let safetensors_path = model_path_ref.join("rwkvtts-Int8_22.safetensors");
             if prefab_path.exists() {
                 prefab_path
@@ -306,7 +359,7 @@ impl RwkvSampler {
                 safetensors_path
             } else {
                 return Err(anyhow::anyhow!(
-                    "模型文件不存在: 在目录 {} 中未找到 rwkvtts-Int8_22.prefab 或 rwkvtts-Int8_22.safetensors",
+                    "模型文件不存在: 在目录 {} 中未找到 webrwkv.safetensors 或 rwkvtts-Int8_22.safetensors",
                     model_path
                 ));
             }
@@ -618,27 +671,17 @@ impl RwkvSampler {
         // 这避免了不同请求之间的状态污染问题
         // 创建独立推理上下文
         let batch = RnnInputBatch::new(input_tokens_u32.clone(), RnnOption::Last);
-        let inference = RnnInput::new(vec![batch], self.token_chunk_size);
+        let mut inference = RnnInput::new(vec![batch], self.token_chunk_size);
 
         // 重要：确保推理上下文完全独立，不受之前请求影响
         // 推理上下文已隔离
-        // 使用推理状态管理器优化推理调用
-        let context_id = format!("tts_prefill_{}", self.generate_request_id());
-        let (mut inference, prefill_logits) = self
-            .inference_state_manager
-            .smart_inference(&mut self.runtime, inference, &context_id, 1)
-            .await?;
-
-        let mut last_logits: Vec<f32> = if !prefill_logits.is_empty() {
-            prefill_logits[0].clone()
-        } else {
-            // 回退到传统方式
-            loop {
-                let (next_inference, output) = self.runtime.infer(inference).await?;
-                inference = next_inference;
-                if output[0].0.size() > 0 {
-                    break output[0].0.clone().to_vec();
-                }
+        // 关键修复：直接执行Prefill推理，不使用缓存管理器
+        // 这确保第一个logit不会被跳过或丢失
+        let mut last_logits: Vec<f32> = loop {
+            let (next_inference, output) = self.runtime.infer(inference).await?;
+            inference = next_inference;
+            if output[0].0.size() > 0 {
+                break output[0].0.clone().to_vec();
             }
         };
 
@@ -711,90 +754,68 @@ impl RwkvSampler {
             args_sem.top_p = 0.9;
             args_sem.top_k = 1; // 只选择最可能的token
         } else {
-            // 非声音克隆场景，使用原有的动态调整逻辑
-            let global_fidelity_factor = args.voice_fidelity;
-            let global_randomness_factor = args.layered_randomness.global_randomness;
-            let global_conservative_factor =
-                global_fidelity_factor * (1.0 - global_randomness_factor);
+            // 正常生成模式：使用与Python版本一致的固定参数
+            // Python版本: Global阶段(temperature=1.0, top_p=0.95, top_k=20)
+            args_global.temperature = 1.0;
+            args_global.top_p = 0.95;
+            args_global.top_k = 20;
 
-            // Global阶段采用更保守的参数调整
-            args_global.temperature *= (0.3 + 0.7 * (1.0 - global_conservative_factor)).max(0.1);
-            args_global.top_p =
-                (args_global.top_p * (0.8 + 0.2 * global_conservative_factor)).max(0.2);
-            args_global.top_k = ((args_global.top_k as f32)
-                * (0.9 + 0.1 * global_conservative_factor))
-                .max(5.0) as usize;
-
-            // Semantic阶段：控制语音表达，可以适度随机
-            let sem_fidelity_factor = args.voice_fidelity;
-            let sem_randomness_factor = args.layered_randomness.semantic_randomness;
-            let sem_conservative_factor = sem_fidelity_factor * (1.0 - sem_randomness_factor);
-
-            // Semantic阶段保持适度的变化性
-            args_sem.temperature *= (0.6 + 0.4 * (1.0 - sem_conservative_factor)).max(0.2);
-            args_sem.top_p = (args_sem.top_p * (0.75 + 0.25 * sem_conservative_factor)).max(0.15);
-            args_sem.top_k = ((args_sem.top_k as f32) * (0.85 + 0.15 * sem_conservative_factor))
-                .max(10.0) as usize;
+            // Python版本: Semantic阶段(temperature=1.0, top_p=0.95, top_k=80)
+            args_sem.temperature = 1.0;
+            args_sem.top_p = 0.95;
+            args_sem.top_k = 80;
         }
 
-        // 创建独立的RNG用于不同阶段 - 声音克隆时不使用随机数
-        let mut global_rng = if has_ref_audio {
-            None // 声音克隆时不使用随机数生成器
-        } else if args.layered_randomness.use_independent_seeds {
-            self.create_stage_rng(args.seed, args.layered_randomness.global_seed_offset)
-        } else {
-            self.rng.clone()
-        };
+        // 简化RNG管理，参考Python版本使用统一的随机状态
+        // 声音克隆时使用确定性采样（temperature=0），否则使用当前RNG状态
+        let use_deterministic = has_ref_audio;
 
-        let mut semantic_rng = if has_ref_audio {
-            None // 声音克隆时不使用随机数生成器
-        } else if args.layered_randomness.use_independent_seeds {
-            self.create_stage_rng(args.seed, args.layered_randomness.semantic_seed_offset)
-        } else {
-            self.rng.clone()
-        };
+        // 如果是声音克隆，临时调整采样参数为确定性
+        if use_deterministic {
+            args_global.temperature = 0.01; // 接近确定性
+            args_sem.temperature = 0.01;
+        }
 
         // Python实现固定生成32个global tokens，并且仅在前4096维内采样
         let global_tokens_size: usize = 32;
 
         // 使用批量推理优化Global阶段
-        let global_context_id = format!("tts_global_{}", self.generate_request_id());
-        let mut global_logits_cache: Vec<Vec<f32>> = Vec::new();
-        let mut cache_index = 0;
 
-        // 开始生成global tokens
+        // 打印Global阶段采样参数
+        log::info!("🎯 开始生成Global tokens，目标数量: {}", global_tokens_size);
+        log::info!("📋 Global阶段采样参数:");
+        log::info!(
+            "   - 默认参数: temperature={:.3}, top_p={:.3}, top_k={}",
+            args.temperature,
+            args.top_p,
+            args.top_k
+        );
+        log::info!(
+            "   - 实际参数: temperature={:.3}, top_p={:.3}, top_k={}",
+            args_global.temperature,
+            args_global.top_p,
+            args_global.top_k
+        );
+        if has_ref_audio {
+            log::info!("   - 模式: 声音克隆 (确定性采样)");
+        } else {
+            log::info!("   - 模式: 正常生成 (随机采样)");
+        }
         for i in 0..global_tokens_size {
-            // 取得当前可用的logits
+            // 关键修复：确保第一个token使用Prefill阶段的正确logits
             let logits: &[f32] = if i == 0 {
+                // 第一个token必须使用Prefill阶段的logits
                 &last_logits
-            } else if cache_index < global_logits_cache.len() {
-                // 使用缓存的logits
-                &global_logits_cache[cache_index]
             } else {
-                // 需要批量获取更多logits
-                let remaining_tokens = global_tokens_size - i;
-                let batch_size = remaining_tokens.min(8); // 批量推理8个token
-
-                let (next_inference, batch_logits) = self
-                    .inference_state_manager
-                    .smart_inference(&mut self.runtime, inference, &global_context_id, batch_size)
-                    .await?;
+                // 后续token通过推理获取
+                let (next_inference, output) = self.runtime.infer(inference).await?;
                 inference = next_inference;
-
-                if !batch_logits.is_empty() {
-                    global_logits_cache.extend(batch_logits);
-                    cache_index = 0;
-                    &global_logits_cache[cache_index]
+                if output[0].0.size() > 0 {
+                    last_logits = output[0].0.clone().to_vec();
+                    &last_logits
                 } else {
-                    // 回退到传统方式
-                    loop {
-                        let (next_inference, output) = self.runtime.infer(inference).await?;
-                        inference = next_inference;
-                        if output[0].0.size() > 0 {
-                            last_logits = output[0].0.clone().to_vec();
-                            break &last_logits;
-                        }
-                    }
+                    // 如果没有输出，继续使用之前的logits
+                    &last_logits
                 }
             };
 
@@ -804,22 +825,21 @@ impl RwkvSampler {
             } else {
                 4096
             };
-            // Global阶段采样
-            let next_id = self.sample_logits_with_rng(
-                &logits[..vocab_global],
-                &args_global,
-                None,
-                &mut global_rng,
-            );
+            // Global阶段采样 - 使用简化的采样方法
+            let next_id = self.sample_logits(&logits[..vocab_global], &args_global, None);
 
             // 追加到global输出（相对域 [0..4095]）
             global_tokens.push(next_id as i32);
             // 反馈到模型：直接使用原始ID（与C++代码一致）
             inference.batches[0].push(next_id as u32);
 
-            // 更新缓存索引
-            if cache_index < global_logits_cache.len() {
-                cache_index += 1;
+            // 打印当前生成进度
+            if (i + 1) % 8 == 0 || i == global_tokens_size - 1 {
+                println!(
+                    "📊 Global阶段: 已生成 {}/{} tokens",
+                    i + 1,
+                    global_tokens_size
+                );
             }
             // Global token生成
         }
@@ -843,7 +863,26 @@ impl RwkvSampler {
         let mut semantic_logits_cache: Vec<Vec<f32>> = Vec::new();
         let mut semantic_cache_index = 0;
 
-        // 开始生成semantic tokens
+        // 打印Semantic阶段采样参数
+        log::info!("🎯 开始生成Semantic tokens，最大数量: {}", semantic_limit);
+        log::info!("📋 Semantic阶段采样参数:");
+        log::info!(
+            "   - 默认参数: temperature={:.3}, top_p={:.3}, top_k={}",
+            args.temperature,
+            args.top_p,
+            args.top_k
+        );
+        log::info!(
+            "   - 实际参数: temperature={:.3}, top_p={:.3}, top_k={}",
+            args_sem.temperature,
+            args_sem.top_p,
+            args_sem.top_k
+        );
+        if has_ref_audio {
+            log::info!("   - 模式: 声音克隆 (确定性采样)");
+        } else {
+            log::info!("   - 模式: 正常生成 (随机采样)");
+        }
         for i in 0..semantic_limit {
             // 取得当前语义阶段的logits：首步使用注入标签后的logits，其后每步从runtime获取
             let logits: &[f32] = if i == 0 {
@@ -908,26 +947,32 @@ impl RwkvSampler {
                 }
             }
 
-            let next_id = self.sample_logits_with_rng(
-                &logits_buf[..copy_len],
-                &args_sem,
-                None,
-                &mut semantic_rng,
-            );
+            let next_id = self.sample_logits(&logits_buf[..copy_len], &args_sem, None);
 
             // 追加到semantic输出（原始域 [0..8191]）
             semantic_tokens.push(next_id as i32);
             // 语义阶段反馈：直接反馈原始id（经验）
             inference.batches[0].push(next_id as u32);
 
-            // 更新缓存索引
-            if semantic_cache_index < semantic_logits_cache.len() {
-                semantic_cache_index += 1;
+            // 打印当前生成进度
+            if (i + 1) % 16 == 0 || i == semantic_limit - 1 {
+                println!(
+                    "📊 Semantic阶段: 已生成 {}/{} tokens",
+                    i + 1,
+                    semantic_limit
+                );
             }
+
+            // 语义token生成完成
             // Semantic token生成
         }
 
         // TTS生成完成
+        println!(
+            "✅ TTS生成完成 - Global tokens: {}, Semantic tokens: {}",
+            global_tokens.len(),
+            semantic_tokens.len()
+        );
         Ok((global_tokens, semantic_tokens))
     }
 
@@ -1003,7 +1048,7 @@ impl RwkvSampler {
         // 采样器状态已彻底重置 (RNG + batch索引)
     }
 
-    /// 采样函数 - Nucleus(top-p) + top-k + temperature
+    /// 采样函数 - 使用与Python版本一致的sample_logits逻辑
     /// forbid_token: 可选禁止采样的token（如某些阶段的特殊符号）
     pub fn sample_logits(
         &mut self,
@@ -1011,135 +1056,14 @@ impl RwkvSampler {
         args: &SamplerArgs,
         forbid_token: Option<usize>,
     ) -> usize {
-        let mut rng_ref = self.rng.clone();
-        self.sample_logits_with_rng(logits, args, forbid_token, &mut rng_ref)
-    }
-
-    /// 使用指定RNG的采样函数
-    pub fn sample_logits_with_rng(
-        &self,
-        logits: &[f32],
-        args: &SamplerArgs,
-        forbid_token: Option<usize>,
-        rng: &mut Option<StdRng>,
-    ) -> usize {
-        let vocab_size = logits.len();
-        if vocab_size == 0 {
-            return 0;
-        }
-
-        // 构建候选token索引
-        let mut indices = Vec::with_capacity(vocab_size);
-        if let Some(ft) = forbid_token {
-            for i in 0..vocab_size {
-                if i != ft {
-                    indices.push(i);
-                }
-            }
-        } else {
-            indices.extend(0..vocab_size);
-        }
-        if indices.is_empty() {
-            return 0;
-        }
-
-        let temperature = args.temperature.max(0.1);
-        let top_k = if args.top_k == 0 || args.top_k > indices.len() {
-            indices.len()
-        } else {
-            args.top_k
-        };
-        let top_p = args.top_p.clamp(0.0, 1.0);
-
-        // 快速路径：确定性采样
-        if top_k == 1 || top_p < 1e-4 {
-            let mut best = indices[0];
-            let mut best_val = f32::NEG_INFINITY;
-            for &i in &indices {
-                let v = logits[i];
-                if v > best_val {
-                    best_val = v;
-                    best = i;
-                }
-            }
-            return best;
-        }
-
-        // 按logits降序排序
-        indices.sort_by(|&a, &b| {
-            logits[b]
-                .partial_cmp(&logits[a])
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        if top_k < indices.len() {
-            indices.truncate(top_k);
-        }
-
-        // 数值稳定的softmax
-        let inv_t = 1.0 / temperature;
-        let mut probs = Vec::with_capacity(indices.len());
-        let mut max_scaled = f32::NEG_INFINITY;
-
-        // 计算缩放值并找到最大值
-        for &i in &indices {
-            let scaled = logits[i] * inv_t;
-            if scaled > max_scaled {
-                max_scaled = scaled;
-            }
-            probs.push(scaled);
-        }
-
-        // 计算exp并归一化
-        for p in &mut probs {
-            *p = ((*p - max_scaled).clamp(-80.0, 80.0)).exp();
-        }
-        let mut sum: f32 = probs.iter().sum();
-        if sum > 0.0 && sum.is_finite() {
-            for p in &mut probs {
-                *p /= sum;
-            }
-        } else {
-            let uniform = 1.0 / (probs.len() as f32).max(1.0);
-            probs.fill(uniform);
-        }
-
-        // top-p截断
-        if top_p < 1.0 {
-            let mut cumsum = 0.0;
-            let mut cutoff = probs.len();
-            for (i, &p) in probs.iter().enumerate() {
-                cumsum += p;
-                if cumsum >= top_p {
-                    cutoff = i + 1;
-                    break;
-                }
-            }
-            if cutoff < probs.len() {
-                probs.truncate(cutoff);
-                indices.truncate(cutoff);
-            }
-            // 重新归一化
-            sum = probs.iter().sum();
-            if sum > 0.0 && sum.is_finite() {
-                for p in &mut probs {
-                    *p /= sum;
-                }
-            }
-        }
-
-        // 按概率采样
-        let r: f32 = if let Some(rng_ref) = rng {
-            rng_ref.gen()
-        } else {
-            StdRng::from_entropy().gen()
-        };
-        let mut cumsum = 0.0;
-        for (i, &p) in probs.iter().enumerate() {
-            cumsum += p;
-            if r <= cumsum {
-                return indices[i];
-            }
-        }
-        *indices.last().unwrap_or(&0)
+        // 使用与Python版本一致的sample_logits逻辑
+        sample_logits_with_top_p_k(
+            logits,
+            args.temperature,
+            args.top_p,
+            args.top_k,
+            forbid_token,
+            &mut self.rng,
+        )
     }
 }

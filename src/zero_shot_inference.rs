@@ -137,8 +137,42 @@ pub async fn execute_zero_shot_inference(
         token_chunk_size: infer_context.options.token_chunk_size,
     };
 
+    // 参数对比打印：Python vs Rust (Zero-shot模式)
+    log::info!(
+        "🔍 [{}] Zero-shot模式采样参数对比 (Python vs Rust):",
+        request_id
+    );
+    log::info!("   📊 Semantic阶段:");
+    log::info!("      Python: temperature=1.0, top_p=0.95, top_k=80");
+    log::info!(
+        "      Rust:   temperature={:.1}, top_p={:.2}, top_k={}",
+        args_semantic.temperature,
+        args_semantic.top_p,
+        args_semantic.top_k
+    );
+
+    // 验证参数一致性
+    let semantic_match = (args_semantic.temperature - 1.0).abs() < 0.001
+        && (args_semantic.top_p - 0.95).abs() < 0.001
+        && args_semantic.top_k == 80;
+
+    if semantic_match {
+        log::info!(
+            "✅ [{}] Zero-shot Semantic参数完全匹配Python版本！",
+            request_id
+        );
+    } else {
+        log::warn!(
+            "⚠️ [{}] Zero-shot Semantic参数与Python版本不匹配！",
+            request_id
+        );
+    }
+
     // 开始生成semantic tokens
-    // Semantic阶段采样参数: temperature=1.0, top_p=0.95, top_k=80 (固定参数，与Python一致)
+    println!(
+        "🎯 [{}] Zero-shot模式开始生成Semantic tokens，最大数量: {}",
+        request_id, semantic_limit
+    );
 
     // 简化采样，移除优化组件
 
@@ -191,8 +225,8 @@ pub async fn execute_zero_shot_inference(
             }
         }
 
-        // 使用基本采样
-        let next_id = crate::rwkv_sampler::sample_logits_impl(
+        // 使用简单采样器采样
+        let next_id = crate::rwkv_sampler::sample_logits(
             &logits_masked,
             &args_semantic,
             None, // forbid_token
@@ -207,17 +241,33 @@ pub async fn execute_zero_shot_inference(
         // 额外检查：确保token在semantic范围内 [0..8192)（修复：应该是>8192而不是>=8192）
         if next_id > crate::rwkv_sampler::TTS_EOS_TOKEN as usize {
             warn!(
-                "🚨 [{}] Token {} 超出semantic范围[0..8192]，跳过此token",
+                "🚨 [{}] Token {} 超出semantic范围[0..8192]，停止生成以确保稳定性",
                 request_id, next_id
             );
-            continue;
+            break;
         }
 
         semantic_tokens.push(next_id as i32);
 
         // 反馈到模型：语义阶段直接使用原始token（不加偏移）
         inference.batches[0].push(next_id as u32);
+
+        // 打印当前生成进度
+        if (i + 1) % 16 == 0 || i == semantic_limit - 1 {
+            println!(
+                "📊 [{}] Zero-shot Semantic阶段: 已生成 {}/{} tokens",
+                request_id,
+                i + 1,
+                semantic_limit
+            );
+        }
     }
     // TTS tokens生成完成
+    println!(
+        "✅ [{}] Zero-shot TTS生成完成 - Global tokens: {}, Semantic tokens: {}",
+        request_id,
+        global_tokens.len(),
+        semantic_tokens.len()
+    );
     Ok((global_tokens, semantic_tokens))
 }

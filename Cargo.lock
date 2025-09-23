@@ -2920,6 +2920,7 @@ dependencies = [
  "hf-hub",
  "hound",
  "lazy_static",
+ "log",
  "memmap2",
  "mime",
  "mp3lame-encoder",

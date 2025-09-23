@@ -128,7 +128,7 @@ impl InferenceStateManager {
         context_id: &str,
         batch_size: usize,
     ) -> Result<(RnnInput, Vec<Vec<f32>>), anyhow::Error> {
-        let start_time = Instant::now();
+        let _start_time = Instant::now();
 
         let mut cached_logits = Vec::new();
         let mut current_inference = inference;

@@ -524,26 +524,33 @@ async fn handle_tts_json(req: &mut Request, res: &mut Response) -> Result<(), St
     // zero-shot模式只基于voice_id判断
     let zero_shot_mode = web_tts_request.voice_id.is_some();
 
-    // 处理speed参数，支持字符串和数值类型
+    // 处理speed参数，支持字符串和数值类型，统一转换为字符串
     let speed_value = match &web_tts_request.speed {
         Some(speed) => {
             // 尝试解析为字符串
             if let Ok(speed_str) = serde_json::from_value::<String>(speed.clone()) {
-                // 根据字符串值映射到数值
+                // 直接使用字符串值
                 match speed_str.as_str() {
-                    "very_slow" => 3.0,
-                    "slow" => 3.8,
-                    "medium" => 4.2,
-                    "fast" => 4.7,
-                    "very_fast" => 5.0,
-                    _ => 4.2, // 默认值
+                    "very_slow" | "slow" | "medium" | "fast" | "very_fast" => speed_str,
+                    _ => "medium".to_string(), // 默认值
                 }
             } else {
-                // 尝试解析为f32
-                serde_json::from_value::<f32>(speed.clone()).unwrap_or(4.2)
+                // 尝试解析为f32并转换为对应的字符串
+                let speed_num = serde_json::from_value::<f32>(speed.clone()).unwrap_or(4.2);
+                if speed_num <= 3.4 {
+                    "very_slow".to_string()
+                } else if speed_num <= 4.0 {
+                    "slow".to_string()
+                } else if speed_num <= 4.5 {
+                    "medium".to_string()
+                } else if speed_num <= 4.8 {
+                    "fast".to_string()
+                } else {
+                    "very_fast".to_string()
+                }
             }
         }
-        None => 4.2, // 默认语速
+        None => "medium".to_string(), // 默认语速
     };
 
     let pipeline_args = LightweightTtsPipelineArgs {
@@ -559,13 +566,13 @@ async fn handle_tts_json(req: &mut Request, res: &mut Response) -> Result<(), St
         age: web_tts_request.age.unwrap_or("youth-adult".to_string()),
         gender: web_tts_request.gender.unwrap_or("male".to_string()),
         emotion: web_tts_request.emotion.unwrap_or("NEUTRAL".to_string()),
-        // 音调和语速需要转换为数值
+        // 音调直接使用字符串
         pitch: match web_tts_request.pitch.as_deref() {
-            Some("low_pitch") => 150.0,
-            Some("medium_pitch") => 200.0,
-            Some("high_pitch") => 250.0,
-            Some("very_high_pitch") => 300.0,
-            _ => 200.0, // 默认中音调
+            Some("low_pitch") => "low".to_string(),
+            Some("medium_pitch") => "medium".to_string(),
+            Some("high_pitch") => "high".to_string(),
+            Some("very_high_pitch") => "very_high".to_string(),
+            _ => "medium".to_string(), // 默认中音调
         },
         speed: speed_value, // 使用处理后的speed值
         // 添加提示词
@@ -1079,7 +1086,7 @@ async fn download_models_from_hf() -> Result<()> {
 
     // 需要下载的文件列表
     let files_to_download = vec![
-        "rwkvtts-Int8_22.prefab",
+        "webrwkv.safetensors",
         "tokenizer.json",
         "BiCodecTokenize.onnx",
         "wav2vec2-large-xlsr-53.onnx",
@@ -1201,21 +1208,21 @@ async fn main() -> Result<()> {
                 .long("quant-layers")
                 .value_name("NUMBER")
                 .help("指定量化层数")
-                .default_value("24"),
+                .default_value("0"),
         )
         .arg(
             Arg::new("quant-type")
                 .long("quant-type")
                 .value_name("TYPE")
                 .help("指定量化类型 (none, int8, nf4, sf4)。推荐使用 int8 以获得最佳稳定性")
-                .default_value("int8"),
+                .default_value("none"),
         )
         .arg(
             Arg::new("model-path")
                 .long("model-path")
                 .value_name("PATH")
                 .help("模型文件路径")
-                .default_value("assets/model/rwkvtts-Int8_22.prefab"),
+                .default_value("assets/model/webrwkv.safetensors"),
         )
         .arg(
             Arg::new("vocab-path")

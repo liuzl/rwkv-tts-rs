@@ -1,6 +1,6 @@
 [package]
 name = "rwkv-tts-rs"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 build = "build.rs"
 
@@ -31,6 +31,7 @@ serde = { version = "1.0.221", features = ["derive"] }
 base64 = "0.22"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+log = "0.4"
 lazy_static = "1.4"
 async-trait = "0.1"
 flume = "0.11"
@@ -83,6 +84,4 @@ opt-level = 3
 [profile.release.package.ort]
 opt-level = 3
 
-[[bench]]
-name = "sampling_benchmark"
-harness = false
+ 

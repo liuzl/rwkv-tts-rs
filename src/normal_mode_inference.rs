@@ -11,14 +11,14 @@ pub async fn execute_normal_inference(
     infer_context: TtsInferContext,
     text_tokens: Vec<i32>,
     property_tokens: Vec<i32>,
-    rng: rand::rngs::StdRng,
+    _rng: rand::rngs::StdRng,
     request: &crate::rwkv_sampler::TtsBatchRequest,
 ) -> Result<(Vec<i32>, Vec<i32>)> {
     let request_id = &infer_context.request_id;
     // 开始普通模式推理
 
     // 获取采样参数
-    let sampler_args = &request.args;
+    let _sampler_args = &request.args;
 
     // Acquire runtime semaphore for the entire inference to ensure isolation
     let _runtime_permit = infer_context
@@ -39,6 +39,16 @@ pub async fn execute_normal_inference(
     input_tokens.push(crate::rwkv_sampler::TTS_TAG_2);
     input_tokens.extend_from_slice(&text_tokens);
     input_tokens.push(crate::rwkv_sampler::TTS_TAG_0);
+
+    // 调试：打印输入序列构建信息
+    log::info!("🔍 [{}] 输入序列构建详情:", request_id);
+    log::info!("   📝 属性tokens: {:?}", property_tokens);
+    log::info!("   📝 文本tokens长度: {}", text_tokens.len());
+    log::info!("   📝 完整输入序列长度: {}", input_tokens.len());
+    log::info!(
+        "   📝 输入序列前10个token: {:?}",
+        &input_tokens[..std::cmp::min(10, input_tokens.len())]
+    );
 
     // 构建完整输入序列
 
@@ -69,20 +79,41 @@ pub async fn execute_normal_inference(
         }
     };
 
+    // 新增：根据logits长度推断词表大小，并校验属性token是否越界
+    let vocab_size = last_logits.len();
+    if !property_tokens.is_empty() {
+        let mut out_of_range = vec![];
+        for &t in &property_tokens {
+            if (t as usize) >= vocab_size {
+                out_of_range.push(t);
+            }
+        }
+        if !out_of_range.is_empty() {
+            log::warn!(
+                "🚨 [{}] 检测到属性tokens超出词表范围，可能被模型忽略：越界token={:?}，词表大小={}。请核对TTS_SPECIAL_TOKEN_OFFSET是否与模型/词表匹配。",
+                request_id,
+                out_of_range,
+                vocab_size
+            );
+        } else {
+            log::info!(
+                "✅ [{}] 属性tokens在词表范围内（vocab_size={}），将参与Prefill阶段。",
+                request_id,
+                vocab_size
+            );
+        }
+    }
+
     // === Global 阶段 ===
     let mut global_tokens: Vec<i32> = Vec::new();
     let mut semantic_tokens: Vec<i32> = Vec::new();
 
     // 普通模式进行正常的生成流程（不使用预提取特征）
-    // 从推理上下文获取采样参数
-    let mut args_global = crate::rwkv_sampler::SamplerArgs {
-        temperature: infer_context.options.temperature,
-        top_k: if infer_context.options.top_k == 0 {
-            20
-        } else {
-            infer_context.options.top_k
-        },
-        top_p: infer_context.options.top_p,
+    // Global阶段使用固定参数（与Python版本一致）
+    let args_global = crate::rwkv_sampler::SamplerArgs {
+        temperature: 1.0, // Global阶段使用固定参数
+        top_k: 20,
+        top_p: 0.95,
         seed: infer_context.options.seed,
         max_tokens: 32, // Global阶段固定32个tokens
         voice_fidelity: infer_context.options.voice_fidelity,
@@ -115,7 +146,12 @@ pub async fn execute_normal_inference(
             Some(StdRng::from_entropy())
         }
     } else {
-        Some(rng.clone())
+        // 创建新的RNG实例，避免共享状态导致的不一致
+        Some(if let Some(seed) = args_global.seed {
+            StdRng::seed_from_u64(seed.wrapping_add(100))
+        } else {
+            StdRng::from_entropy()
+        })
     };
 
     let mut semantic_rng = if args_semantic.layered_randomness.use_independent_seeds {
@@ -129,26 +165,56 @@ pub async fn execute_normal_inference(
             Some(StdRng::from_entropy())
         }
     } else {
-        Some(rng.clone())
+        // 创建新的RNG实例，避免共享状态导致的不一致
+        Some(if let Some(seed) = args_semantic.seed {
+            StdRng::seed_from_u64(seed.wrapping_add(200))
+        } else {
+            StdRng::from_entropy()
+        })
     };
 
     // RNG状态初始化
 
-    // 应用音色保真度调整
-    let global_fidelity_factor = sampler_args.voice_fidelity;
-    let global_randomness_factor = sampler_args.layered_randomness.global_randomness;
-    let global_conservative_factor = global_fidelity_factor * (1.0 - global_randomness_factor);
+    // Global和Semantic阶段都使用固定参数（与Python版本一致）
+    // 移除参数调整逻辑，直接使用固定值
 
-    // Global阶段采用更保守的参数调整
-    args_global.temperature *=
-        (0.3_f32 + 0.7_f32 * (1.0_f32 - global_conservative_factor)).max(0.1_f32);
-    args_global.top_p =
-        (args_global.top_p * (0.8_f32 + 0.2_f32 * global_conservative_factor)).max(0.2_f32);
-    args_global.top_k = ((args_global.top_k as f32)
-        * (0.9_f32 + 0.1_f32 * global_conservative_factor))
-        .max(5.0_f32) as usize;
+    // 参数对比打印：Python vs Rust
+    log::info!("🔍 [{}] 采样参数对比 (Python vs Rust):", request_id);
+    log::info!("   📊 Global阶段:");
+    log::info!("      Python: temperature=1.0, top_p=0.95, top_k=20");
+    log::info!(
+        "      Rust:   temperature={:.1}, top_p={:.2}, top_k={}",
+        args_global.temperature,
+        args_global.top_p,
+        args_global.top_k
+    );
+    log::info!("   📊 Semantic阶段:");
+    log::info!("      Python: temperature=1.0, top_p=0.95, top_k=80");
+    log::info!(
+        "      Rust:   temperature={:.1}, top_p={:.2}, top_k={}",
+        args_semantic.temperature,
+        args_semantic.top_p,
+        args_semantic.top_k
+    );
 
-    // Semantic阶段使用固定参数
+    // 验证参数一致性
+    let global_match = (args_global.temperature - 1.0).abs() < 0.001
+        && (args_global.top_p - 0.95).abs() < 0.001
+        && args_global.top_k == 20;
+    let semantic_match = (args_semantic.temperature - 1.0).abs() < 0.001
+        && (args_semantic.top_p - 0.95).abs() < 0.001
+        && args_semantic.top_k == 80;
+
+    if global_match && semantic_match {
+        log::info!("✅ [{}] 参数完全匹配Python版本！", request_id);
+    } else {
+        log::warn!(
+            "⚠️ [{}] 参数与Python版本不匹配！Global匹配: {}, Semantic匹配: {}",
+            request_id,
+            global_match,
+            semantic_match
+        );
+    }
 
     // 生成32个global tokens
     let global_tokens_size: usize = 32;
@@ -177,10 +243,12 @@ pub async fn execute_normal_inference(
         // 直接使用原始logits，不进行增强处理
         let sampling_logits = logits[..vocab_global].to_vec();
 
-        // 使用基本采样
-        let next_id = crate::rwkv_sampler::sample_logits_impl(
+        // 使用top-p/top-k采样器采样
+        let next_id = crate::rwkv_sampler::sample_logits_with_top_p_k(
             &sampling_logits,
-            &args_global,
+            args_global.temperature,
+            args_global.top_p,
+            args_global.top_k,
             None, // forbid_token
             &mut global_rng,
         );
@@ -205,10 +273,28 @@ pub async fn execute_normal_inference(
 
         global_tokens.push(next_id as i32);
 
-        // 反馈到模型：直接使用原始ID（与C++代码一致）
-        inference.batches[0].push(next_id as u32);
+        // 回灌到模型：加上GLOBAL_TOKEN_OFFSET以进入Global域（与Python/zero-shot一致）
+        let with_offset = (next_id as i32 + crate::rwkv_sampler::GLOBAL_TOKEN_OFFSET) as u32;
+        inference.batches[0].push(with_offset);
+        log::debug!(
+            "🔧 [{}] 回灌Global token: raw={}, with_offset={}",
+            request_id,
+            next_id,
+            with_offset
+        );
 
         // Global token生成
+    }
+
+    // 记录Global阶段前若干个token，便于诊断开头漏字问题
+    if !global_tokens.is_empty() {
+        let head = std::cmp::min(8, global_tokens.len());
+        log::info!(
+            "🎯 [{}] Global阶段生成前{}个token: {:?}",
+            request_id,
+            head,
+            &global_tokens[..head]
+        );
     }
 
     // Global tokens生成完成
@@ -272,10 +358,12 @@ pub async fn execute_normal_inference(
             f32::NEG_INFINITY
         };
 
-        // 使用基本采样
-        let next_id = crate::rwkv_sampler::sample_logits_impl(
+        // 使用top-p/top-k采样器采样
+        let next_id = crate::rwkv_sampler::sample_logits_with_top_p_k(
             &logits_masked,
-            &args_semantic,
+            args_semantic.temperature,
+            args_semantic.top_p,
+            args_semantic.top_k,
             None, // forbid_token
             &mut semantic_rng,
         );
@@ -286,20 +374,38 @@ pub async fn execute_normal_inference(
             break;
         }
 
-        // 额外检查：确保token在semantic范围内 [0..8192)（修复：应该是>8192而不是>=8192）
+        // 额外检查：确保token在语义范围内 [0..=8192]
         if next_id > crate::rwkv_sampler::TTS_EOS_TOKEN as usize {
             warn!(
-                "🚨 [{}] Token {} 超出semantic范围[0..8192]，跳过此token",
+                "🚨 [{}] Semantic token {} 超出范围[0..=8192]，跳过此token",
                 request_id, next_id
             );
             continue;
         }
 
-        semantic_tokens.push(next_id as i32);
+        let next_id_i32 = next_id as i32;
+        semantic_tokens.push(next_id_i32);
 
-        // 反馈到模型：语义阶段直接使用原始token（不加偏移）
+        // 反馈到模型：直接使用原始ID（与C++代码一致）
         inference.batches[0].push(next_id as u32);
     }
 
+    // 记录Semantic阶段前若干个token，辅助诊断“开头漏字”
+    if !semantic_tokens.is_empty() {
+        let head = std::cmp::min(12, semantic_tokens.len());
+        log::info!(
+            "🗣️ [{}] Semantic阶段生成前{}个token: {:?}",
+            request_id,
+            head,
+            &semantic_tokens[..head]
+        );
+    } else {
+        log::warn!(
+            "⚠️ [{}] Semantic阶段未生成任何token（可能过早采样到EOS或输入序列构建异常）",
+            request_id
+        );
+    }
+
+    // 返回生成结果
     Ok((global_tokens, semantic_tokens))
 }

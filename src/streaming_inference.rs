@@ -153,6 +153,7 @@ pub struct StreamingInference {
     /// 活跃批处理数
     active_batches: Arc<AtomicUsize>,
     /// 预取队列
+    #[allow(dead_code)]
     prefetch_queue: Arc<Mutex<VecDeque<String>>>,
     /// 任务发送器
     task_tx: Option<mpsc::UnboundedSender<InferenceTask>>,

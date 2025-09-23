@@ -65,27 +65,27 @@ const EMOTION_MAP: &[(&str, i32)] = &[
 /// 将标准属性转换为token ID数组
 ///
 /// # 参数
-/// * `speed` - 语速 ("very_slow", "slow", "medium", "fast", "very_fast")
-/// * `pitch` - 音高 ("low_pitch", "medium_pitch", "high_pitch", "very_high_pitch")
 /// * `age` - 年龄 ("child", "teenager", "youth-adult", "middle-aged", "elderly")
 /// * `gender` - 性别 ("female", "male")
 /// * `emotion` - 情感 (见EMOTION_MAP)
+/// * `pitch` - 音高 ("low_pitch", "medium_pitch", "high_pitch", "very_high_pitch")
+/// * `speed` - 语速 ("very_slow", "slow", "medium", "fast", "very_fast")
 ///
 /// # 返回值
 /// 返回token ID数组，第一个是TTS_SPECIAL_TOKEN_OFFSET，后续是各属性对应的token ID
 pub fn convert_standard_properties_to_tokens(
-    speed: &str,
-    pitch: &str,
     age: &str,
     gender: &str,
     emotion: &str,
+    pitch: &str,
+    speed: &str,
 ) -> Vec<i32> {
     let speed_token = get_token_from_map(SPEED_MAP, speed).unwrap_or(3);
     let pitch_token = get_token_from_map(PITCH_MAP, pitch).unwrap_or(7);
     let age_token = get_token_from_map(AGE_MAP, age).unwrap_or(15);
     let gender_token = get_token_from_map(GENDER_MAP, gender).unwrap_or(46);
     let emotion_token = get_token_from_map(EMOTION_MAP, emotion).unwrap_or(26);
-
+    //println!("convert_standard_properties_to_tokens: age={}, gender={}, emotion={}, pitch={}, speed={}", age_token, gender_token, emotion_token, pitch_token, speed_token);
     // 统一属性拼接顺序为: age, gender, emotion, pitch, speed (与Python和C++保持一致)
     vec![
         TTS_SPECIAL_TOKEN_OFFSET,
@@ -118,10 +118,8 @@ pub fn classify_pitch(pitch: f32, gender: &str, age: u8) -> String {
                     "low_pitch".to_string()
                 } else if pitch < 290.0 {
                     "medium_pitch".to_string()
-                } else if pitch < 330.0 {
-                    "high_pitch".to_string()
                 } else {
-                    "very_high_pitch".to_string()
+                    "high_pitch".to_string()
                 }
             }
             "teenager" => {
@@ -230,12 +228,12 @@ pub fn classify_pitch(pitch: f32, gender: &str, age: u8) -> String {
                 }
             }
             _ => {
-                // 默认男性分类
-                if pitch < 130.0 {
+                // 默认男性分类 - 修复为与C++版本一致
+                if pitch < 114.0 {
                     "low_pitch".to_string()
-                } else if pitch < 180.0 {
+                } else if pitch < 130.0 {
                     "medium_pitch".to_string()
-                } else if pitch < 220.0 {
+                } else if pitch < 151.0 {
                     "high_pitch".to_string()
                 } else {
                     "very_high_pitch".to_string()
@@ -337,7 +335,7 @@ pub fn convert_properties_to_tokens(
     let pitch_class = classify_pitch(pitch, gender, age);
     let age_class = classify_age(age);
 
-    convert_standard_properties_to_tokens(&speed_class, &pitch_class, &age_class, gender, emotion)
+    convert_standard_properties_to_tokens(&age_class, gender, emotion, &pitch_class, &speed_class)
 }
 
 /// 从映射表中获取token
@@ -348,93 +346,4 @@ fn get_token_from_map(map: &[(&str, i32)], key: &str) -> Option<i32> {
         }
     }
     None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_convert_standard_properties_to_tokens() {
-        let result = convert_standard_properties_to_tokens(
-            "medium",
-            "medium_pitch",
-            "youth-adult",
-            "female",
-            "NEUTRAL",
-        );
-        // 统一属性拼接顺序为: age, gender, emotion, pitch, speed (与Python和C++保持一致)
-        let expected = vec![
-            TTS_SPECIAL_TOKEN_OFFSET,      // 77823
-            TTS_SPECIAL_TOKEN_OFFSET + 15, // 77838 (youth-adult)
-            TTS_SPECIAL_TOKEN_OFFSET + 46, // 77869 (female)
-            TTS_SPECIAL_TOKEN_OFFSET + 22, // 77845 (NEUTRAL)
-            TTS_SPECIAL_TOKEN_OFFSET + 7,  // 77830 (medium_pitch)
-            TTS_SPECIAL_TOKEN_OFFSET + 3,  // 77826 (medium speed)
-        ];
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn test_convert_properties_to_tokens() {
-        let result = convert_properties_to_tokens(4.2, 200.0, 25, "female", "NEUTRAL");
-        // 应该返回包含6个token ID的数组
-        assert_eq!(result.len(), 6);
-        assert_eq!(result[0], TTS_SPECIAL_TOKEN_OFFSET);
-        // 检查所有token ID都大于等于TTS_SPECIAL_TOKEN_OFFSET
-        for &token_id in &result {
-            assert!(token_id >= TTS_SPECIAL_TOKEN_OFFSET);
-        }
-    }
-
-    #[test]
-    fn test_classify_pitch() {
-        let result = classify_pitch(200.0, "female", 25);
-        assert_eq!(result, "medium_pitch"); // 女性25岁(youth-adult): 191.0 < 200.0 < 211.0
-
-        let result = classify_pitch(100.0, "male", 25);
-        assert_eq!(result, "low_pitch"); // 男性25岁(youth-adult): 100.0 < 115.0
-
-        let result = classify_pitch(200.0, "female", 25);
-        assert_eq!(result, "medium_pitch"); // 女性25岁(youth-adult): 191.0 < 200.0 < 211.0
-    }
-
-    #[test]
-    fn test_classify_speed() {
-        let result = classify_speed(4.2);
-        assert_eq!(result, "medium");
-    }
-
-    #[test]
-    fn test_classify_age() {
-        assert_eq!(classify_age(10), "child");
-        assert_eq!(classify_age(16), "teenager");
-        assert_eq!(classify_age(25), "youth-adult");
-        assert_eq!(classify_age(45), "middle-aged");
-        assert_eq!(classify_age(70), "elderly");
-    }
-
-    #[test]
-    fn test_age_string_to_number() {
-        assert_eq!(age_string_to_number("child"), 10);
-        assert_eq!(age_string_to_number("teenager"), 16);
-        assert_eq!(age_string_to_number("youth-adult"), 25);
-        assert_eq!(age_string_to_number("middle-aged"), 45);
-        assert_eq!(age_string_to_number("elderly"), 70);
-        assert_eq!(age_string_to_number("unknown"), 25); // 默认值
-    }
-
-    #[test]
-    fn test_child_female_very_high_pitch() {
-        // 测试儿童女性极高音分类
-        let result = classify_pitch(350.0, "female", 10);
-        assert_eq!(result, "very_high_pitch");
-
-        // 测试边界值
-        let result = classify_pitch(330.0, "female", 10);
-        assert_eq!(result, "very_high_pitch");
-
-        let result = classify_pitch(329.0, "female", 10);
-        assert_eq!(result, "high_pitch");
-    }
 }

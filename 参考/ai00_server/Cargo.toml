@@ -1,0 +1,42 @@
+[workspace]
+default-members = ["crates/ai00-server"]
+members = ["crates/ai00-core", "crates/ai00-server"]
+resolver = "2"
+
+[workspace.package]
+authors = ["Gu ZhenNiu <448885@qq.com>", "Zhang Zhenyuan <cryscan@umich.edu>"]
+categories = ["science"]
+description = "An implementation of the RWKV language model in pure WebGPU."
+edition = "2021"
+exclude = ["assets"]
+homepage = "https://github.com/cgisky1980/ai00_rwkv_server"
+keywords = ["LLM", "deep-learning", "model", "rwkv"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/cgisky1980/ai00_rwkv_server"
+rust-version = "1.76"
+version = "0.6.0"
+
+[workspace.dependencies]
+anyhow = { version = "1", features = ["backtrace"] }
+derivative = "2.2.0"
+flume = "0.11.0"
+itertools = "0.14"
+log = "0.4"
+memmap2 = "0.9"
+safetensors = "0.5.0"
+salvo = "0.77"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+
+[workspace.dependencies.ai00-core]
+path = "crates/ai00-core"
+
+[workspace.dependencies.web-rwkv]
+# path = "../web-rwkv"
+default-features = false
+features = ["native"]
+version = "0.10.12"
+
+
+[profile.release]
+lto = false

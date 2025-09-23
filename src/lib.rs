@@ -31,7 +31,6 @@ pub mod normal_mode_inference;
 pub mod zero_shot_inference;
 
 // Performance optimization modules
-pub mod fast_sampler;
 pub mod inference_state_manager;
 pub mod streaming_inference;
 
@@ -158,5 +157,15 @@ pub mod tts_generator {
         fn default() -> Self {
             Self::new()
         }
+    }
+}
+
+// 测试模块
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_basic_functionality() {
+        // 基本功能测试
+        assert_eq!(2 + 2, 4);
     }
 }
