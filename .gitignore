@@ -74,7 +74,6 @@ Thumbs.db
 .env.*.local
 
 # 测试和性能分析结果文件
-*.json
 *.py
 *.ps1
 nul
