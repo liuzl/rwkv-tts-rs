@@ -1,5 +1,19 @@
 # 更新日志
 
+## [0.2.5] - 2025-01-15
+
+### 代码质量改进
+- 修复了所有Clippy警告，提升代码质量
+- 修复了`ref_audio_utilities.rs`中的不必要类型转换警告
+- 修复了手动范围检查，改用`contains()`方法提高可读性
+- 修复了`zero_shot_inference.rs`中的手动clamp模式，改用`.clamp()`方法
+- 删除了未使用的`trim_and_pad_silence`方法，清理冗余代码
+
+### 项目维护
+- 清理了参考目录中的旧文档文件
+- 确保所有代码通过`cargo clippy`检查，无警告
+- 验证了`cargo build --release`编译成功
+
 ## [0.2.3] - 2025-09-17
 
 ### 修复
