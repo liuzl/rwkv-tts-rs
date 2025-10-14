@@ -7,6 +7,9 @@ use ort::session::builder::GraphOptimizationLevel;
 use ort::session::input::SessionInputValue;
 use ort::session::Session;
 use ort::value::Value;
+use rubato::{
+    Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
+};
 use std::path::Path;
 use symphonia::core::audio::{AudioBufferRef, Signal};
 use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
@@ -160,6 +163,16 @@ impl RefAudioUtilities {
             return Err(anyhow!("音频数据不完整：样本数少于声道数"));
         }
 
+        // 检查音频最小长度要求（至少0.1秒）
+        let min_samples = (sample_rate as f32 * 0.1) as usize;
+        if audio_samples.len() < min_samples {
+            return Err(anyhow!(
+                "音频太短：{:.3}秒（最少需要0.1秒），样本数：{}",
+                audio_samples.len() as f32 / sample_rate as f32,
+                audio_samples.len()
+            ));
+        }
+
         let mut audio = Array1::from(audio_samples);
 
         // 多声道转单声道 - 与C++实现一致（取第一个通道）
@@ -200,6 +213,9 @@ impl RefAudioUtilities {
             // Applying volume normalization
             audio = self.audio_volume_normalize(audio, 0.2);
         }
+
+        // 静音处理：仅裁剪开头和结尾静音，避免强制填充导致对齐偏移
+        audio = self.trim_silence_only(audio, 0.01);
 
         // Final audio length processed
         Ok(audio)
@@ -512,7 +528,7 @@ impl RefAudioUtilities {
         Ok((audio_samples, sample_rate, channels))
     }
 
-    /// 高质量重采样音频数据 - 与C++实现保持一致
+    /// 高质量重采样音频数据 - 使用rubato库实现专业级重采样
     pub fn resample_audio_high_quality(
         &self,
         audio: Array1<f32>,
@@ -523,91 +539,51 @@ impl RefAudioUtilities {
             return Ok(audio);
         }
 
-        let original_len = audio.len();
-        let ratio = original_sr as f64 / target_sr as f64;
-        let target_len = (original_len as f64 / ratio).round() as usize;
+        // 使用rubato库进行高质量重采样
+        // 配置参数以获得最佳音质，与Python的soxr库相当
+        let params = SincInterpolationParameters {
+            sinc_len: 256,  // 更长的sinc长度提供更好的频率响应
+            f_cutoff: 0.95, // 稍微保守的截止频率避免混叠
+            interpolation: SincInterpolationType::Linear,
+            oversampling_factor: 256, // 高过采样因子提供更好的精度
+            window: WindowFunction::BlackmanHarris2, // 优秀的频域特性
+        };
 
-        // 使用Sinc插值进行高质量重采样（模拟专业音频库的行为）
-        let mut resampled = Vec::with_capacity(target_len);
-        let sinc_window_size = 8; // 窗口大小
+        // 创建重采样器
+        let mut resampler = SincFixedIn::<f32>::new(
+            target_sr as f64 / original_sr as f64,
+            2.0, // 最大比率变化
+            params,
+            audio.len(),
+            1, // 单声道
+        )
+        .map_err(|e| anyhow!("创建重采样器失败: {}", e))?;
 
-        for i in 0..target_len {
-            let src_idx = i as f64 * ratio;
-            let center = src_idx.round() as isize;
-            let mut sum = 0.0f32;
-            let mut weight_sum = 0.0f32;
+        // 准备输入数据（rubato需要Vec<Vec<f32>>格式）
+        let input_data = vec![audio.to_vec()];
 
-            // 应用Sinc插值窗口
-            for j in -sinc_window_size..=sinc_window_size {
-                let sample_idx = center + j;
-                if sample_idx >= 0 && (sample_idx as usize) < original_len {
-                    let x = src_idx - sample_idx as f64;
-                    let weight = if x.abs() < f64::EPSILON {
-                        1.0f32
-                    } else {
-                        let pi_x = std::f64::consts::PI * x;
-                        let sinc = (pi_x.sin() / pi_x) as f32;
-                        // 应用Hann窗口减少振铃效应
-                        let hann = 0.5
-                            * (1.0
-                                + (2.0 * std::f64::consts::PI * x
-                                    / (2.0 * sinc_window_size as f64))
-                                    .cos()) as f32;
-                        sinc * hann
-                    };
+        // 执行重采样
+        let output_data = resampler
+            .process(&input_data, None)
+            .map_err(|e| anyhow!("重采样处理失败: {}", e))?;
 
-                    sum += audio[sample_idx as usize] * weight;
-                    weight_sum += weight;
-                }
-            }
-
-            // 归一化权重
-            let sample = if weight_sum > f32::EPSILON {
-                sum / weight_sum
-            } else {
-                0.0
-            };
-
-            resampled.push(sample);
+        // 提取重采样后的数据
+        if output_data.is_empty() || output_data[0].is_empty() {
+            return Err(anyhow!("重采样输出为空"));
         }
 
-        Ok(Array1::from(resampled))
+        Ok(Array1::from(output_data[0].clone()))
     }
 
-    /// 重采样音频数据（使用线性插值，保留以兼容）
+    /// 重采样音频数据（现在使用高质量rubato库实现）
     pub fn resample_audio(
         &self,
         audio: Array1<f32>,
         original_sr: u32,
         target_sr: u32,
     ) -> Result<Array1<f32>> {
-        if original_sr == target_sr {
-            return Ok(audio);
-        }
-
-        let original_len = audio.len();
-        let ratio = original_sr as f64 / target_sr as f64;
-        let target_len = (original_len as f64 / ratio).round() as usize;
-        let mut resampled = Vec::with_capacity(target_len);
-
-        for i in 0..target_len {
-            let src_idx = i as f64 * ratio;
-            let idx_floor = src_idx.floor() as usize;
-            let idx_ceil = (idx_floor + 1).min(original_len - 1);
-            let frac = src_idx - idx_floor as f64;
-
-            if idx_floor >= original_len {
-                resampled.push(0.0);
-            } else if idx_floor == idx_ceil || frac < f64::EPSILON {
-                resampled.push(audio[idx_floor]);
-            } else {
-                // 线性插值
-                let val = audio[idx_floor] * (1.0 - frac as f32) + audio[idx_ceil] * frac as f32;
-                resampled.push(val);
-            }
-        }
-
-        Ok(Array1::from(resampled))
+        // 直接调用高质量重采样方法，确保所有重采样都使用相同的高质量算法
+        self.resample_audio_high_quality(audio, original_sr, target_sr)
     }
 
     /// 音量归一化 - 与Python实现保持一致
@@ -664,7 +640,7 @@ impl RefAudioUtilities {
         }
     }
 
-    /// 零均值单位方差归一化 - 与C++实现完全一致
+    /// 零均值单位方差归一化 - 与C++实现完全一致，增强数值稳定性
     /// C++实现：
     /// float mean = std::accumulate(input_values.begin(), input_values.end(), 0.0f) / input_values.size();
     /// float std = std::sqrt(std::accumulate(input_values.begin(), input_values.end(), 0.0f, [mean](float a, float b) {
@@ -674,21 +650,44 @@ impl RefAudioUtilities {
     ///     input_values[i] = (input_values[i] - mean) / std;
     /// }
     pub fn zero_mean_unit_variance_normalize(mut input_values: Vec<f32>) -> Vec<f32> {
+        // 数值稳定性检查：处理空向量或极短向量
+        if input_values.is_empty() {
+            return input_values;
+        }
+
+        if input_values.len() == 1 {
+            // 单个值的情况，直接返回零
+            input_values[0] = 0.0;
+            return input_values;
+        }
+
         // 计算均值 - 与C++完全一致
         let mean = input_values.iter().sum::<f32>() / input_values.len() as f32;
 
-        // 计算标准差 - 与C++实现完全一致
+        // 检查是否所有值都相同（方差为零的情况）
+        let all_same = input_values.iter().all(|&x| (x - mean).abs() < 1e-10);
+        if all_same {
+            // 所有值都相同，直接设为零
+            input_values.fill(0.0);
+            return input_values;
+        }
+
+        // 计算标准差 - 与C++实现完全一致，但增加更大的epsilon以提高数值稳定性
         let variance_sum = input_values
             .iter()
             .fold(0.0f32, |acc, &b| acc + (b - mean) * (b - mean));
-        let std = (variance_sum / input_values.len() as f32 + 1e-7f32).sqrt();
+        let variance = variance_sum / input_values.len() as f32;
+
+        // 使用固定的epsilon值，与Python版本保持一致
+        let epsilon = 1e-7f32;
+        let std = (variance + epsilon).sqrt();
 
         // 归一化 - 与C++完全一致
         for value in input_values.iter_mut() {
             *value = (*value - mean) / std;
         }
 
-        // Zero-mean unit-variance normalize applied
+        // Zero-mean unit-variance normalize applied with numerical stability
 
         input_values
     }
@@ -743,13 +742,13 @@ impl RefAudioUtilities {
             window
         };
 
-        // 创建梅尔滤波器组 - 使用slaney归一化，fmin=10，fmax=8000（与C++保持一致）
+        // 创建梅尔滤波器组 - 使用slaney归一化，fmin=10，fmax=sample_rate/2.0（与Python版本保持一致）
         let mel_filters = self.create_mel_filterbank_slaney_with_fmax(
             n_mels,
             n_fft,
             self.sample_rate as f32,
             10.0,
-            8000.0,
+            self.sample_rate as f32 / 2.0,
         );
 
         let mut mel_spectrogram = Array2::zeros((n_mels, n_frames));
@@ -867,7 +866,7 @@ impl RefAudioUtilities {
         self.create_mel_filterbank_slaney(n_mels, n_fft, sample_rate, 0.0)
     }
 
-    /// 计算功率谱 - 更精确的实现
+    /// 计算功率谱 - 更精确的实现，真正计算功率谱而非幅度谱
     fn compute_power_spectrum_accurate(&self, frame: &[f32]) -> Vec<f32> {
         let n_fft = frame.len();
         let n_freqs = n_fft / 2 + 1;
@@ -884,9 +883,17 @@ impl RefAudioUtilities {
                 imag += sample * angle.sin();
             }
 
-            // 计算幅度谱的平方（power=1对应幅度谱）
-            let magnitude = (real * real + imag * imag).sqrt();
-            *power = magnitude;
+            // 计算真正的功率谱：幅度的平方
+            *power = real * real + imag * imag;
+
+            // 对于非零频率和奈奎斯特频率，需要适当的归一化
+            if k > 0 && k < n_freqs - 1 {
+                // 对于中间频率，由于我们只计算正频率部分，需要乘以2来补偿负频率部分
+                *power *= 2.0;
+            }
+
+            // 归一化：除以N^2以匹配标准功率谱定义
+            *power /= (n_fft * n_fft) as f32;
         }
 
         power_spectrum
@@ -975,6 +982,18 @@ impl RefAudioUtilities {
         // get_ref_clip parameters calculated
 
         let wav_length = wav.len();
+
+        // 验证音频长度的合理性
+        if wav_length == 0 {
+            // 如果音频为空，返回零填充的参考片段
+            return Array1::zeros(ref_segment_length);
+        }
+
+        if ref_segment_length == 0 {
+            // 如果参考长度为0，返回空数组
+            return Array1::zeros(0);
+        }
+
         if ref_segment_length > wav_length {
             // 如果音频不足指定长度，重复音频直到达到要求
             let repeat_times = ref_segment_length / wav_length + 1;
@@ -1026,14 +1045,27 @@ impl RefAudioUtilities {
     }
 
     pub fn tokenize(&mut self, audio_path: &str) -> Result<(Vec<i32>, Vec<i32>)> {
+        self.tokenize_with_options(audio_path, true)
+    }
+
+    /// 带选项的tokenize方法，允许配置音量归一化
+    pub fn tokenize_with_options(
+        &mut self,
+        audio_path: &str,
+        volume_normalize: bool,
+    ) -> Result<(Vec<i32>, Vec<i32>)> {
         // Tokenizing audio
 
-        // 确定性音频预处理：启用音量归一化以确保一致性（修复潜在噪音问题）
-        let (wav, ref_wav) = self.process_audio(audio_path, true)?;
+        // 音频预处理：可配置音量归一化选项
+        let (wav, ref_wav) = self.process_audio(audio_path, volume_normalize)?;
 
         let feat = self.extract_wav2vec2_features(wav.as_slice().unwrap())?;
 
-        let ref_mel = self.extract_mel_spectrogram(&ref_wav, 128, 1024, 320, 1024); // n_mels=128, n_fft=1024, hop_length=320, win_length=1024
+        // 使用与C++实现完全一致的梅尔频谱提取，避免参数差异导致不稳定
+        let ref_mel =
+            crate::tts_pipeline_fixes::TtsPipelineFixes::extract_mel_spectrogram_consistent(
+                &ref_wav,
+            )?;
 
         // 确保数据是行优先布局（C-order）
         let ref_mel_c_order = if ref_mel.is_standard_layout() {
@@ -1082,11 +1114,9 @@ impl RefAudioUtilities {
         let mut semantic_tokens: Vec<i32> = vec![];
         let mut global_tokens: Vec<i32> = vec![];
 
-        // 检查输出名称来确定正确的解析顺序
-        for (i, (name, output)) in outputs.iter().enumerate() {
-            // Processing output
-
-            if name == "semantic_tokens" || i == 0 {
+        // 1) 首先严格按名称解析，避免位置顺序不一致导致错位
+        for (name, output) in outputs.iter() {
+            if name == "semantic_tokens" {
                 semantic_tokens = match output.try_extract_tensor::<i64>() {
                     Ok((_s_sem, semantic_tokens_slice)) => {
                         semantic_tokens_slice.iter().map(|&x| x as i32).collect()
@@ -1096,8 +1126,7 @@ impl RefAudioUtilities {
                         semantic_tokens_slice.to_vec()
                     }
                 };
-                // Extracted semantic_tokens
-            } else if name == "global_tokens" || i == 1 {
+            } else if name == "global_tokens" {
                 global_tokens = match output.try_extract_tensor::<i64>() {
                     Ok((_s_glb, global_tokens_slice)) => {
                         global_tokens_slice.iter().map(|&x| x as i32).collect()
@@ -1107,32 +1136,114 @@ impl RefAudioUtilities {
                         global_tokens_slice.to_vec()
                     }
                 };
-                // Extracted global_tokens
             }
         }
 
-        // 如果按名称没有找到，使用索引方式作为备选
-        if semantic_tokens.is_empty() && global_tokens.is_empty() && outputs.len() >= 2 {
-            // Falling back to index-based parsing
-            semantic_tokens = match outputs[0].try_extract_tensor::<i64>() {
-                Ok((_s_sem, semantic_tokens_slice)) => {
-                    semantic_tokens_slice.iter().map(|&x| x as i32).collect()
+        // 2) 如果名称未匹配到，按形状辅助判定（semantic为[1, L]；global为[1, 1, 32]）
+        if semantic_tokens.is_empty() || global_tokens.is_empty() {
+            for (_name, output) in outputs.iter() {
+                let shape = output.shape();
+                if semantic_tokens.is_empty() && shape.len() == 2 && shape[0] == 1 {
+                    semantic_tokens = match output.try_extract_tensor::<i64>() {
+                        Ok((_s_sem, semantic_tokens_slice)) => {
+                            semantic_tokens_slice.iter().map(|&x| x as i32).collect()
+                        }
+                        Err(_) => {
+                            let (_s_sem, semantic_tokens_slice) =
+                                output.try_extract_tensor::<i32>()?;
+                            semantic_tokens_slice.to_vec()
+                        }
+                    };
+                    continue;
                 }
-                Err(_) => {
-                    let (_s_sem, semantic_tokens_slice) = outputs[0].try_extract_tensor::<i32>()?;
-                    semantic_tokens_slice.to_vec()
+                if global_tokens.is_empty() && shape.len() == 3 && shape[0] == 1 && shape[1] == 1 {
+                    global_tokens = match output.try_extract_tensor::<i64>() {
+                        Ok((_s_glb, global_tokens_slice)) => {
+                            global_tokens_slice.iter().map(|&x| x as i32).collect()
+                        }
+                        Err(_) => {
+                            let (_s_glb, global_tokens_slice) =
+                                output.try_extract_tensor::<i32>()?;
+                            global_tokens_slice.to_vec()
+                        }
+                    };
                 }
-            };
+            }
+        }
 
-            global_tokens = match outputs[1].try_extract_tensor::<i64>() {
-                Ok((_s_glb, global_tokens_slice)) => {
-                    global_tokens_slice.iter().map(|&x| x as i32).collect()
+        // 3) 兜底：若仍无法按名称/形状区分，则按索引[0]=semantic，[1]=global
+        if (semantic_tokens.is_empty() || global_tokens.is_empty()) && outputs.len() >= 2 {
+            if semantic_tokens.is_empty() {
+                semantic_tokens = match outputs[0].try_extract_tensor::<i64>() {
+                    Ok((_s_sem, semantic_tokens_slice)) => {
+                        semantic_tokens_slice.iter().map(|&x| x as i32).collect()
+                    }
+                    Err(_) => {
+                        let (_s_sem, semantic_tokens_slice) =
+                            outputs[0].try_extract_tensor::<i32>()?;
+                        semantic_tokens_slice.to_vec()
+                    }
+                };
+            }
+            if global_tokens.is_empty() {
+                global_tokens = match outputs[1].try_extract_tensor::<i64>() {
+                    Ok((_s_glb, global_tokens_slice)) => {
+                        global_tokens_slice.iter().map(|&x| x as i32).collect()
+                    }
+                    Err(_) => {
+                        let (_s_glb, global_tokens_slice) =
+                            outputs[1].try_extract_tensor::<i32>()?;
+                        global_tokens_slice.to_vec()
+                    }
+                };
+            }
+        }
+
+        // 4) 范围校验与修正日志（保持与生成阶段一致的约束）
+        // global: [0..4096)
+        if !global_tokens.is_empty() {
+            let mut out_of_range: Vec<i32> = Vec::new();
+            for &t in &global_tokens {
+                if !(0..4096).contains(&t) {
+                    out_of_range.push(t);
                 }
-                Err(_) => {
-                    let (_s_glb, global_tokens_slice) = outputs[1].try_extract_tensor::<i32>()?;
-                    global_tokens_slice.to_vec()
+            }
+            if !out_of_range.is_empty() {
+                log::warn!(
+                    "🚨 参考global tokens越界：{:?}，将进行clamp到[0..4095]",
+                    out_of_range
+                );
+                for v in global_tokens.iter_mut() {
+                    *v = (*v).clamp(0, 4095);
                 }
-            };
+            } else {
+                log::info!("✅ 参考global tokens在词表范围内（vocab_size=4096）");
+            }
+        }
+
+        // semantic: [0..=8192]（包含EOS=8192），仅记录越界并clamp，不移除EOS
+        if !semantic_tokens.is_empty() {
+            let mut out_of_range: Vec<i32> = Vec::new();
+            for &t in &semantic_tokens {
+                if !(0..=crate::rwkv_sampler::TTS_EOS_TOKEN).contains(&t) {
+                    out_of_range.push(t);
+                }
+            }
+            if !out_of_range.is_empty() {
+                log::warn!(
+                    "🚨 参考semantic tokens越界：{:?}，将clamp到[0..={}](含EOS)",
+                    out_of_range,
+                    crate::rwkv_sampler::TTS_EOS_TOKEN
+                );
+                for v in semantic_tokens.iter_mut() {
+                    *v = (*v).clamp(0, crate::rwkv_sampler::TTS_EOS_TOKEN);
+                }
+            } else {
+                log::info!(
+                    "✅ 参考semantic tokens在范围内（含EOS={}）",
+                    crate::rwkv_sampler::TTS_EOS_TOKEN
+                );
+            }
         }
 
         // Global tokens unique values counted
@@ -1183,5 +1294,64 @@ impl RefAudioUtilities {
         let (_shape, audio_slice) = outputs[0].try_extract_tensor::<f32>()?;
         let audio_vec: Vec<f32> = audio_slice.to_vec();
         Ok(audio_vec)
+    }
+
+    /// 检测音频开头和结尾的静音长度
+    /// 返回 (开头静音样本数, 结尾静音样本数)
+    fn detect_silence(&self, audio: &Array1<f32>, threshold: f32) -> (usize, usize) {
+        let samples = audio.as_slice().unwrap();
+        let len = samples.len();
+
+        if len == 0 {
+            return (0, 0);
+        }
+
+        // 检测开头静音
+        let mut start_silence = 0;
+        for &sample in samples.iter() {
+            if sample.abs() > threshold {
+                break;
+            }
+            start_silence += 1;
+        }
+
+        // 检测结尾静音
+        let mut end_silence = 0;
+        for &sample in samples.iter().rev() {
+            if sample.abs() > threshold {
+                break;
+            }
+            end_silence += 1;
+        }
+
+        // 确保不会超过音频总长度
+        if start_silence + end_silence >= len {
+            // 如果整个音频都是静音，平均分配
+            let half = len / 2;
+            return (half, len - half);
+        }
+
+        (start_silence, end_silence)
+    }
+
+    /// 智能处理音频开头和结尾的静音，确保各保持0.5秒
+    /// target_silence_duration: 目标静音时长（秒）
+    /// sample_rate: 采样率
+    /// 仅裁剪开头与结尾静音，不进行补零，保持原始有效音频时长
+    fn trim_silence_only(&self, audio: Array1<f32>, silence_threshold: f32) -> Array1<f32> {
+        let (start_silence, end_silence) = self.detect_silence(&audio, silence_threshold);
+        let samples = audio.as_slice().unwrap();
+        let total_len = samples.len();
+
+        // 计算有效音频片段范围
+        let audio_start = start_silence.min(total_len);
+        let audio_end = total_len.saturating_sub(end_silence);
+
+        if audio_start >= audio_end {
+            // 整段静音，直接返回原长度的零（保持行为简洁、可预期）
+            return Array1::zeros(total_len);
+        }
+
+        Array1::from(samples[audio_start..audio_end].to_vec())
     }
 }

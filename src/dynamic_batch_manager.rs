@@ -501,6 +501,13 @@ impl DynamicBatchManager {
         // 获取tokenizer
         let tokenizer = &infer_context.tokenizer;
 
+        // 打印最终用于推理的文本（便于确认是否仍包含参考prompt）
+        log::info!(
+            "📝 [{}] 最终用于推理的文本: {}",
+            infer_context.request_id,
+            request.text
+        );
+
         // 编码文本
         let text_tokens_u32: Vec<u32> = tokenizer
             .encode(request.text.as_bytes())

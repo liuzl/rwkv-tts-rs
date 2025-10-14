@@ -130,7 +130,8 @@ mod tests {
     fn test_process_text_zero_shot() {
         let pipeline = LightweightTtsPipeline::new();
         let result = pipeline.process_text_zero_shot("用户文本", "提示文本");
-        assert_eq!(result, "提示文本用户文本");
+        // 跨语言模式：不拼接prompt_text，只返回用户文本
+        assert_eq!(result, "用户文本");
     }
 }
 
@@ -150,15 +151,11 @@ impl LightweightTtsPipeline {
     }
 
     /// 处理文本（Zero-shot模式）
-    /// 注意：Zero-shot模式下结合参考音频的提示文本和用户输入文本
-    /// 返回格式为"prompt_text + user_text"的组合，以改善语音合成效果
-    pub fn process_text_zero_shot(&self, text: &str, prompt_text: &str) -> String {
-        let combined_text = format!("{}{}", prompt_text, text);
-        #[cfg(debug_assertions)]
-        {
-            // Zero-shot模式：使用组合文本处理
-        }
-        combined_text
+    /// 跨语言克隆：不再拼接参考音频的prompt_text，避免语言被参考文本牵引
+    /// 仅使用用户输入文本，以保证内容语言由文本决定，音色由global tokens维持
+    pub fn process_text_zero_shot(&self, text: &str, _prompt_text: &str) -> String {
+        tracing::info!("🌐 Zero-shot文本处理：忽略prompt_text，仅使用用户文本实现跨语言");
+        text.to_string()
     }
 
     /// 生成TTS属性tokens

@@ -45,7 +45,25 @@ pub async fn execute_zero_shot_inference(
 
     // 修正tokens范围，确保在有效范围内
     let corrected_global: Vec<i32> = ref_global.iter().map(|&t| t.clamp(0, 4095)).collect();
-    let _corrected_semantic: Vec<i32> = ref_semantic.iter().map(|&t| t.clamp(0, 8192)).collect();
+    let mut _corrected_semantic: Vec<i32> =
+        ref_semantic.iter().map(|&t| t.clamp(0, 8192)).collect();
+
+    // 修复：移除参考语义tokens末尾的EOS，避免模型在生成阶段立即结束
+    let original_sem_len = _corrected_semantic.len();
+    while let Some(&last) = _corrected_semantic.last() {
+        if last == crate::rwkv_sampler::TTS_EOS_TOKEN {
+            _corrected_semantic.pop();
+        } else {
+            break;
+        }
+    }
+    let trimmed_count = original_sem_len.saturating_sub(_corrected_semantic.len());
+    if trimmed_count > 0 {
+        warn!(
+            "🔧 [{}] 参考semantic末尾EOS已移除 {} 个，防止早停",
+            request_id, trimmed_count
+        );
+    }
 
     if corrected_global != *ref_global {
         warn!("🔧 [{}] 已修正global tokens范围到[0..4096)", request_id);
@@ -65,8 +83,12 @@ pub async fn execute_zero_shot_inference(
         input_tokens.push(token + crate::rwkv_sampler::GLOBAL_TOKEN_OFFSET);
     }
     input_tokens.push(crate::rwkv_sampler::TTS_TAG_1);
-    // 加入预读取的semantic tokens
-    input_tokens.extend_from_slice(&_corrected_semantic);
+    // 跨语言克隆：跳过参考语义预填，仅保留global tokens影响音色
+    // 说明：参考语义通常强绑定原语言内容，预填会导致继续原语种，不利于跨语言
+    log::info!(
+        "🌐 [{}] 跨语言克隆模式：禁用参考semantic预填，仅使用global tokens维持音色",
+        request_id
+    );
 
     // === Prefill 阶段（复制普通模式）===
     let input_tokens_u32: Vec<u32> = input_tokens.iter().map(|&t| t as u32).collect();
@@ -87,7 +109,7 @@ pub async fn execute_zero_shot_inference(
     }
 
     // 消化输入直到产生输出
-    let _last_logits: Vec<f32> = loop {
+    let last_sem_logits_prefill: Vec<f32> = loop {
         let (remaining_input, output) = runtime.infer(inference.clone()).await?;
         inference = remaining_input;
         if !output.is_empty() && output[0].0.size() > 0 {
@@ -95,34 +117,36 @@ pub async fn execute_zero_shot_inference(
         }
     };
 
-    // === Global 阶段：跳过生成，直接使用预提取的tokens ===
+    // 预填完成后，直接在语义域继续采样（不再重复注入global或标签）
     let global_tokens: Vec<i32> = corrected_global.clone();
     let mut semantic_tokens: Vec<i32> = Vec::new();
-
-    // 开始生成TTS tokens
-
-    // 将预提取的global tokens反馈到模型（不加偏移量，与普通模式一致）
-    for &token in &global_tokens {
-        inference.batches[0].push(token as u32);
-    }
-
-    // 已将预提取的global tokens反馈到模型
-
-    // === 切换到 Semantic 阶段（复制普通模式结构）===
-    inference.batches[0].push(crate::rwkv_sampler::TTS_TAG_1 as u32);
-    // 切换到Semantic阶段，推入TTS_TAG_1
-
-    // 让标签生效，直到产生输出，并保留logits供首步使用
-    let last_sem_logits: Vec<f32> = loop {
-        let (next_inference, output) = runtime.infer(inference).await?;
-        inference = next_inference;
-        if output[0].0.size() > 0 {
-            break output[0].0.clone().to_vec();
-        }
-    };
+    let last_sem_logits: Vec<f32> = last_sem_logits_prefill;
 
     // === Semantic tokens 生成阶段（复制普通模式参数和逻辑）===
     let semantic_limit: usize = usize::min(2048, 2048);
+    // 加入最小生成长度约束（动态）：按文本长度自适应，避免首步采到EOS导致语义序列为空
+    let min_semantic_len: usize = {
+        let tlen = text_tokens.len();
+        // 经验：语义token约为文本token的1/4～1/2，这里取保守的1/4
+        // 下限8，上限64，兼顾短文本与长文本
+        tlen.saturating_div(4).clamp(8, 64)
+    };
+    // 基于文本长度的“硬下限”，在达到该长度前一律禁止EOS
+    // 经验初值：语义至少为文本token的1.8倍，避免还没读完就早停
+    let hard_min_semantic_len: usize = {
+        let tlen = text_tokens.len();
+        let est = ((tlen as f32) * 1.8).ceil() as usize;
+        // 不超过语义上限的90%，避免过长
+        let upper = (semantic_limit as f32 * 0.9).floor() as usize;
+        std::cmp::min(upper, std::cmp::max(min_semantic_len, est))
+    };
+    log::info!(
+        "🛡️ [{}] Zero-shot最小语义长度: 动态={}，硬下限={} (text_tokens={})",
+        request_id,
+        min_semantic_len,
+        hard_min_semantic_len,
+        text_tokens.len()
+    );
 
     // Zero-shot模式：跳过Global阶段，直接使用预提取的global_tokens
     // 设置Semantic阶段采样参数
@@ -192,6 +216,10 @@ pub async fn execute_zero_shot_inference(
     };
 
     let mut semantic_rng_opt = Some(semantic_rng);
+    // EOS允许阈值判定：最近N步非EOS比例达到阈值才允许EOS
+    let eos_window: usize = 12;
+    let eos_ratio_threshold: f32 = 0.7;
+    let mut recent_non_eos: Vec<bool> = Vec::with_capacity(eos_window);
     for i in 0..semantic_limit {
         let logits: Vec<f32> = if i == 0 {
             last_sem_logits.clone()
@@ -225,8 +253,15 @@ pub async fn execute_zero_shot_inference(
             }
         }
 
+        // 在最小长度内禁止EOS，确保至少生成若干语义tokens
+        let eos_idx = crate::rwkv_sampler::TTS_EOS_TOKEN as usize;
+        // 达到“硬下限”之前一律禁止EOS
+        if i < hard_min_semantic_len && eos_idx < logits_masked.len() {
+            logits_masked[eos_idx] = f32::NEG_INFINITY;
+        }
+
         // 使用简单采样器采样
-        let next_id = crate::rwkv_sampler::sample_logits(
+        let mut next_id = crate::rwkv_sampler::sample_logits(
             &logits_masked,
             &args_semantic,
             None, // forbid_token
@@ -235,7 +270,42 @@ pub async fn execute_zero_shot_inference(
 
         // 检查是否遇到EOS token（必须在范围检查之前）
         if next_id == crate::rwkv_sampler::TTS_EOS_TOKEN as usize {
-            break;
+            // 阈值判定：最近N步非EOS比例达到阈值才允许EOS
+            let window_len = recent_non_eos.len();
+            let non_eos_count = recent_non_eos.iter().filter(|&&b| b).count();
+            let ratio = if window_len > 0 {
+                non_eos_count as f32 / window_len as f32
+            } else {
+                0.0
+            };
+            let allow_eos = window_len >= eos_window && ratio >= eos_ratio_threshold;
+            if allow_eos {
+                log::info!(
+                    "🛑 [{}] 允许EOS结束：recent_non_eos_ratio={:.2}, window={}",
+                    request_id,
+                    ratio,
+                    window_len
+                );
+                break;
+            } else {
+                log::info!(
+                    "⏭️ [{}] 阻止EOS：recent_non_eos_ratio={:.2}, window={}；继续采样",
+                    request_id,
+                    ratio,
+                    window_len
+                );
+                // 屏蔽EOS后重新采样
+                let eos_idx2 = crate::rwkv_sampler::TTS_EOS_TOKEN as usize;
+                if eos_idx2 < logits_masked.len() {
+                    logits_masked[eos_idx2] = f32::NEG_INFINITY;
+                }
+                next_id = crate::rwkv_sampler::sample_logits(
+                    &logits_masked,
+                    &args_semantic,
+                    None,
+                    &mut semantic_rng_opt,
+                );
+            }
         }
 
         // 额外检查：确保token在semantic范围内 [0..8192)（修复：应该是>8192而不是>=8192）
@@ -245,6 +315,14 @@ pub async fn execute_zero_shot_inference(
                 request_id, next_id
             );
             break;
+        }
+
+        // 维护最近N步非EOS比例窗口
+        let is_non_eos = next_id != crate::rwkv_sampler::TTS_EOS_TOKEN as usize;
+        recent_non_eos.push(is_non_eos);
+        if recent_non_eos.len() > eos_window {
+            // 移除最早的一项（窗口固定长度）
+            recent_non_eos.remove(0);
         }
 
         semantic_tokens.push(next_id as i32);
@@ -260,6 +338,28 @@ pub async fn execute_zero_shot_inference(
                 i + 1,
                 semantic_limit
             );
+        }
+    }
+    // 回退逻辑：如果语义为空（可能首步采到了EOS），强制从prefill的logits采样至少1个token
+    if semantic_tokens.is_empty() {
+        warn!(
+            "⚠️ [{}] Zero-shot语义序列为空，应用回退采样确保至少1个token",
+            request_id
+        );
+        let mut logits_masked = last_sem_logits.clone();
+        let eos_idx = crate::rwkv_sampler::TTS_EOS_TOKEN as usize;
+        if eos_idx < logits_masked.len() {
+            logits_masked[eos_idx] = f32::NEG_INFINITY;
+        }
+        let next_id = crate::rwkv_sampler::sample_logits(
+            &logits_masked,
+            &args_semantic,
+            None,
+            &mut semantic_rng_opt,
+        );
+        if next_id <= crate::rwkv_sampler::TTS_EOS_TOKEN as usize {
+            semantic_tokens.push(next_id as i32);
+            inference.batches[0].push(next_id as u32);
         }
     }
     // TTS tokens生成完成
